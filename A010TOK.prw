@@ -21,5 +21,3 @@ If (__cUserID $ cXUser)
 Endif
 
 Return( lRet )
-
-//ALTERADO PARA TESTE
