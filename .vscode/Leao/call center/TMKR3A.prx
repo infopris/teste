@@ -1,0 +1,512 @@
+#include "rwmake.ch"
+
+User Function TMKR3A(cNumAte)        // Impressao das Orcamentos - Leão - 15/06/2020
+
+SetPrvt("CNUM,OPRINT>,LINHA,NPAGINA,PTIPO,CINDEX")
+SetPrvt("CCOND,NINDEX,NMARCADOS,NOLDAREA,OFONT1,OFONT2")
+SetPrvt("OFONT3,OFONT4,OFONT5,OFONT6,OFONT7,OFONT8")
+SetPrvt("OFONT9,OPRN,AFONTES,CCLICOMP,CSEGCOMP,CINSCRE")
+SetPrvt("ACAMPOS,CNOMARQ,AHEADER,AMARCADOS,LCRIAWORK,CPICTQTDE")
+SetPrvt("CPICT1TOTAL,CPICT2TOTAL,OFONT10,LEND,OFNT,CARQ")
+SetPrvt("CTEXTO,NCOL,N,")
+
+
+If TYPE("uPorPrograma") == "U"
+	cPerg := "TMK003"
+	//+--------------------------------------------------------------+
+	//¦ Verifica as perguntas selecionadas                           ¦
+	//+--------------------------------------------------------------+
+	pergunte(cPerg,.t.)  
+Else
+	mv_par05 := cNumAte
+	dbSelectArea("SUA")
+	dbSetOrder(1)
+	dbSeek(xFilial("SUA") + mv_par05) //Pedido
+Endif
+IF SUA->UA_OPER<>'2' // Orçamento
+	return
+Endif
+processa()
+                         
+Return
+                          
+**************************    
+Static function Processa()
+**************************
+
+nPagina := 1
+dbSelectArea("SA1")
+dbSetOrder(1)
+dbSeek(xFilial("SA1")+SUA->UA_CLIENTE+SUA->UA_LOJA)
+cCliente:= SA1->A1_COD +"/"+SA1->A1_LOJA + " - " + SA1->A1_NOME
+cCGC    := SA1->A1_CGC
+cRg     := IIf(!Empty(SA1->A1_INSCR),SA1->A1_INSCR,SA1->A1_RG)
+cBairro := sa1->a1_bairro
+//----------------------------------------------------------------------------//
+// Printer
+#xcommand AVPRINT [ <oPrint> ] ;
+             [ <name:TITLE,NAME,DOC> <cDocument> ] ;
+             [ <user: FROM USER> ] ;
+             [ <prvw: PREVIEW> ] ;
+             [ TO  <xModel> ] ;
+       => ;
+      [ <oPrint> := ] AvPrintBegin( [<cDocument>], <.user.>, <.prvw.>, <xModel> )
+
+#xcommand AVPRINTER [ <oPrint> ] ;
+             [ <name:NAME,DOC> <cDocument> ] ;
+             [ <user: FROM USER> ] ;
+             [ <prvw: PREVIEW> ] ;
+             [ TO  <xModel> ] ;
+       => ;
+      [ <oPrint> := ] AvPrintBegin( [<cDocument>], <.user.>, <.prvw.>, <xModel> )
+
+#xcommand AVPAGE => AvPageBegin()
+
+#xcommand AVENDPAGE => AvPageEnd()
+
+#xcommand AVNEWPAGE => AvPageEnd() ; AvPageBegin()
+
+#xcommand AVENDPRINT   => AvPrintEnd() ; AvSetPortrait()
+#xcommand AVENDPRINTER => AvPrintEnd() ; AvSetPortrait()
+//----------------------------------------------------------------------------//
+
+#xtranslate :TIMES_NEW_ROMAN_18_NEGRITO    => \[1\]
+#xtranslate :TIMES_NEW_ROMAN_12            => \[2\]
+#xtranslate :TIMES_NEW_ROMAN_12_NEGRITO    => \[3\]
+#xtranslate :COURIER_08_NEGRITO            => \[4\]
+#xtranslate :TIMES_NEW_ROMAN_08            => \[5\]
+#xtranslate :COURIER_12_NEGRITO            => \[6\]
+#xtranslate :COURIER_20_NEGRITO            => \[7\]
+#xtranslate :TIMES_NEW_ROMAN_10_NEGRITO    => \[8\]
+#xtranslate :TIMES_NEW_ROMAN_08_UNDERLINE  => \[9\]
+#xtranslate :COURIER_NEW_09                => \[10\]
+#xtranslate :TIMES_NEW_ROMAN_10            => \[11\]
+#xtranslate :COURIER_NEW_10                => \[12\]
+
+#COMMAND    TRACO_NORMAL                   => oSend(oPrn,"Line", Linha  ,  50, Linha  , 2350 ) ;
+                                           ;  oSend(oPrn,"Line", Linha+1,  50, Linha+1, 2350 )
+
+#COMMAND    TRACO_REDUZIDO                 => oSend(oPrn,"Line", Linha  ,1200, Linha  , 2300 ) ;
+                                           ;  oSend(oPrn,"Line", Linha+1,1200, Linha+1, 2300 )
+
+#COMMAND    ENCERRA_PAGINA                 => oSend(oPrn,"oFont",aFontes:COURIER_20_NEGRITO) 
+*                                          ;  TRACO_NORMAL
+
+
+#COMMAND    COMECA_PAGINA                  => AVNEWPAGE                                ;
+                                           ;  Linha := 180                             ;
+                                           ;  nPagina := nPagina+ 1                    ;
+                                           ;  pTipo := 2
+*                                          ;  PO150Cabec()                      ;// Substituido pelo assistente de conversao do AP5 IDE em 05/09/01 ==>                                            ;  Execute(PO150Cabec)                      ;
+*                                          ;  PO150Cab_Itens()// Substituido pelo assistente de conversao do AP5 IDE em 05/09/01 ==>                                            ;  Execute(PO150Cab_Itens)
+
+
+#xTranslate  DATA_MES(<x>) =>              SUBSTR(DTOC(<x>)  ,1,2)+ " " + ;
+                                           SUBSTR(CMONTH(<x>),1,3)+ " " + ;
+                                           SUBSTR(DTOC(<x>)  ,7,2)
+
+
+
+cIndex := cCond := nIndex := Nil; nMarcados:=0; nOldArea:=ALIAS()
+oFont1:=oFont2:=oFont3:=oFont4:=oFont5:=oFont6:=oFont7:=oFont8:=oFont9:=Nil
+oPrn:= Linha:= aFontes:= Nil; cCliComp:=""; cSegComp:=""; cInscre:=""
+aCampos:={}; cNomArq:=Nil; aHeader:={}
+aMarcados:={}
+lCriaWork:=.T.
+
+cPictQtde:='@EZ 999,999,999'; cPict1Total:='@EZ 999,999,999,999.99'
+cPict2Total:='@EZ 99,999,999,999,999.99'
+
+
+   AVPRINT oPrn NAME "Emissão do Pedido"
+      //                              Font            W  H  Bold          Device
+      oFont1 := oSend(TFont(),"New","Times New Roman",0,18,,.T.,,,,,,,,,,,oPrn )
+      oFont2 := oSend(TFont(),"New","Times New Roman",0,12,,.F.,,,,,,,,,,,oPrn )
+      oFont3 := oSend(TFont(),"New","Times New Roman",0,12,,.T.,,,,,,,,,,,oPrn )
+      oFont4 := oSend(TFont(),"New","Courier New"    ,0,10,,.T.,,,,,,,,,,,oPrn )
+      oFont5 := oSend(TFont(),"New","Times New Roman",0,08,,.F.,,,,,,,,,,,oPrn )
+      oFont6 := oSend(TFont(),"New","Courier New"    ,0,12,,.T.,,,,,,,,,,,oPrn )
+      oFont7 := oSend(TFont(),"New","Courier New"    ,0,26,,.T.,,,,,,,,,,,oPrn )
+      oFont8 := oSend(TFont(),"New","Times New Roman",0,10,,.T.,,,,,,,,,,,oPrn )
+      //                                                            Underline
+      oFont9 := oSend(TFont(),"New","Times New Roman",0,10,,.T.,,,,,.T.,,,,,,oPrn )
+      oFont10:= oSend(TFont(),"New","Courier New"    ,0,09,,.T.,,,,,,,,,,,oPrn )
+      oFont11:= oSend(TFont(),"New","Times New Roman",0,10,,.F.,,,,,,,,,,,oPrn )
+      oFont12:= oSend(TFont(),"New","Courier New"    ,0,10,,.F.,,,,,,,,,,,oPrn )
+
+      aFontes := { oFont1, oFont2, oFont3, oFont4, oFont5, oFont6, oFont7, oFont8, oFont9, oFont10, oFont11, oFont12 }
+
+      AVPAGE
+	If TYPE("uPorPrograma") == "U"
+		Do case
+		Case mv_par01==mv_par02
+			dbSelectArea("SUA")
+			dbSetOrder(4)                                  
+			set softseek on
+			dbSeek(xFilial("SUA") + dtos(mv_par03)) //Emissao
+			set softseek off
+			do while !eof() .and. ua_emissao>=mv_par03 .and. ua_emissao<=mv_par04
+				if sua->ua_vend==mv_par01
+					dbSelectArea("SA1")
+					dbSetOrder(1)
+					dbSeek(xFilial("SA1")+SUA->UA_CLIENTE+SUA->UA_LOJA)
+					cCliente:= SA1->A1_COD +"/"+SA1->A1_LOJA + " - " + SA1->A1_NOME
+					cCGC    := SA1->A1_CGC
+					cRg     := IIf(!Empty(SA1->A1_INSCR),SA1->A1_INSCR,SA1->A1_RG)
+					cBairro := sa1->a1_bairro
+					dbSelectArea("SUA")
+					R02Det()
+					ENCERRA_PAGINA
+					COMECA_PAGINA
+				endif
+				dbSelectArea("SUA")
+				skip
+			enddo
+		Case mv_par05<>space(6)
+			dbSelectArea("SUA")
+			dbSetOrder(1)
+			set softseek on
+			dbSeek(xFilial("SUA") + mv_par05) //Pedido
+			do while !eof() .and. ua_num>=mv_par05 .and. ua_num<=mv_par06
+				if sua->ua_vend>=mv_par01 .and. sua->ua_vend<=mv_par02
+					dbSelectArea("SA1")
+					dbSetOrder(1)
+					dbSeek(xFilial("SA1")+SUA->UA_CLIENTE+SUA->UA_LOJA)
+					cCliente:= SA1->A1_COD +"/"+SA1->A1_LOJA + " - " + SA1->A1_NOME
+					cCGC    := SA1->A1_CGC
+					cRg     := IIf(!Empty(SA1->A1_INSCR),SA1->A1_INSCR,SA1->A1_RG)
+					cBairro := sa1->a1_bairro
+					dbSelectArea("SUA")
+					R02Det()
+					ENCERRA_PAGINA
+					COMECA_PAGINA
+				endif
+				dbSelectArea("SUA")
+				skip
+			enddo
+		Otherwise
+			dbSelectArea("SUA")
+			dbSetOrder(4)                                  
+			set softseek on
+			dbSeek(xFilial("SUA") + dtos(mv_par03)) //Emissao
+			set softseek off
+			do while !eof() .and. ua_emissao>=mv_par03 .and. ua_emissao<=mv_par04
+				dbSelectArea("SA1")
+				dbSetOrder(1)
+				dbSeek(xFilial("SA1")+SUA->UA_CLIENTE+SUA->UA_LOJA)
+				cCliente:= SA1->A1_COD +"/"+SA1->A1_LOJA + " - " + SA1->A1_NOME
+				cCGC    := SA1->A1_CGC
+				cRg     := IIf(!Empty(SA1->A1_INSCR),SA1->A1_INSCR,SA1->A1_RG)
+				cBairro := sa1->a1_bairro
+				dbSelectArea("SUA")
+				R02Det()
+				ENCERRA_PAGINA
+				COMECA_PAGINA
+				dbSelectArea("SUA")
+				skip
+			enddo
+		endCase
+	Else
+         R02Det()
+ 	endif
+*         Processa({|end| lEnd := end, R02Det() })// Substituido pelo assistente de conversao do AP5 IDE em 05/09/01 ==>          Processa({|end| lEnd := end, Execute(R02Det) })
+
+      AVENDPAGE
+
+      oSend(oFont1,"End")
+      oSend(oFont2,"End")
+      oSend(oFont3,"End")
+      oSend(oFont4,"End")
+      oSend(oFont5,"End")
+      oSend(oFont6,"End")
+      oSend(oFont7,"End")
+      oSend(oFont8,"End")
+      oSend(oFont9,"End")
+      oSend(oFont10,"End")
+      oSend(oFont11,"End")
+
+   AVENDPRINT
+
+
+Return .T.
+
+*----------------*
+Static Function R02Det()
+*----------------*
+
+nPg := 1
+cRespons := substr(cUsuario,7,10)
+Select SA4
+Seek xFilial()+sua->ua_transp
+Select SA3
+Seek xFilial()+sua->ua_vend
+
+*cCgc := sa1->a1_cgc
+If(LEN(TRIM(SA1->A1_CGC)))== 11
+   cCgc := left(SA1->A1_CGC,3)+"."+substr(SA1->A1_CGC,4,3)+"."+substr(SA1->A1_CGC,7,3)+"-"+substr(SA1->A1_CGC,10,2)
+else
+   cCgc := left(SA1->A1_CGC,2)+"."+substr(SA1->A1_CGC,3,3)+"."+substr(SA1->A1_CGC,6,3)+"/"+substr(SA1->A1_CGC,09,4)+"-"+substr(SA1->A1_CGC,13,2)
+Endif      
+
+oFnt := aFontes:COURIER_20_NEGRITO
+pTipo := 5
+if sm0->m0_codigo=="02"
+	oSend( oPrn, "Say", 150, 0150, "RM - Distribuidora"  , aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+else
+// Monta Cabeçalho
+	oSend(oPrn, "SayBitmap", 0150, 0200, "lgrl01.BMP" , 200, 150 )
+	oSend( oPrn, "Say", 250, 1050, "PEDIDO ", aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+//	oSend( oPrn, "Say", 150, 1650, "RUA ECHAPORÃ, 227/231 - CUMBICA ", aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+//	oSend( oPrn, "Say", 200, 1650, "GUARULHOS - SP 07224-090 ", aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+//	oSend( oPrn, "Say", 250, 1650, "TELEFONE: (11) 2462-3070 ", aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+	oSend( oPrn, "Say", 150, 1650, "RUA ECHAPORÃ, 227/231 - CUMBICA ", aFontes:TIMES_NEW_ROMAN_12 )
+	oSend( oPrn, "Say", 220, 1650, "GUARULHOS - SP 07224-090 ", aFontes:TIMES_NEW_ROMAN_12 )
+	oSend( oPrn, "Say", 290, 1650, "TELEFONE: (11) 2462-3070 ", aFontes:TIMES_NEW_ROMAN_12 )
+//	oSend( oPrn, "Say", 150, 0150, "Espelhos Leao"  , aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+endif
+
+//oPrn:Box(0200,0130,0500,2400)  
+//oSend(oPrn,"Line", 0200, 1790, 0500, 1790 ) 
+oPrn:Box(0350,0130,0650,2400)  
+oSend(oPrn,"Line", 0350, 1790, 0650, 1790 ) 
+
+cContat := Trim(Posicione("SU5",1,xFilial("SU5")+SUA->UA_CODCONT,"U5_CONTAT"))
+if empty(cContat)
+	cContat := sa1->a1_contato
+endif
+
+linha := 400
+oSend( oPrn, "Say", Linha    , 0150, sa1->a1_cod+"-"+sa1->a1_loja+" "+ALLTRIM(sa1->a1_nome) , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say", Linha    , 1800, "PROPOSTA : "+sua->ua_num , aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+Linha := Linha + 50
+oSend( oPrn, "Say", Linha    , 0150, "Contato  :"+cContat , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say", Linha    , 1800, "Emissão : "+dtoc(SUA->UA_emissao)+"  Hora :"+time() , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+Linha := Linha + 50
+oSend( oPrn, "Say", Linha    , 0150, ALLTRIM(sa1->a1_end )+"  "+iif(!empty(cBairro),"Bairro :"+cBairro,"")  , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say", Linha    , 1800, "Cond.Pagto : "+sua->UA_CONDPG +"  "+se4->e4_descri  , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+//oSend( oPrn, "Say", Linha    , 1800, cOperador, aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+Linha := Linha + 50
+oSend( oPrn, "Say", Linha    , 0150, "CEP   : "+left(sa1->a1_cep,5)+"-"+right(sa1->a1_cep,3)+"  "+trim(sa1->a1_mun)+"-"+sa1->a1_est , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+cOperador := Trim(Posicione("SU7",1,xFilial("SU7")+SUA->UA_OPERADO,"U7_NOME"))
+oSend( oPrn, "Say", Linha    , 1800, "Operador : "+AllTrim(SUA->UA_OPERADO)+" - "+cOperador, aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+Linha := Linha + 50
+oSend( oPrn, "Say", Linha    , 0150, "CNPJ : "+cCgc, aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say", Linha    , 0700, " I.E./RG:"+cRG , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+Select SA3
+Seek xFilial()+sua->ua_vend
+oSend( oPrn, "Say", Linha    , 1800, "Vend.  : "+sa3->a3_nome  , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+Linha := Linha + 100
+Select SE4
+Seek xFilial()+sua->ua_condpg
+Select SA4
+Seek xFilial()+sua->ua_transp
+Linha := Linha + 50
+oSend( oPrn, "Say", Linha    , 0700, "Transp : "+sa4->a4_nome  , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+
+cabec()
+
+nTotQtd := 0
+nTotVal := 0
+nDescZfr:= 0
+lSuframa := .f.                    
+Select SUB       
+dbSetOrder(1)
+Seek xFilial()+trim(SUA->UA_NUM)
+dentr := sub->ub_dtentre // iif(!empty(sub->ub_dtentre),sub->ub_dtentre,date())
+Do while !eof() .and. SUB->UB_NUM == SUA->UA_NUM
+    Select SB1
+    Seek xFilial()+SUB->UB_PRODUTO
+    Select SUB
+	cDescri	:= sb1->b1_desc
+	If left(sc6->c6_produto,2)='38'
+		cDescri	:= trim(sb1->b1_desc)+" ("+alltrim(str(sub->ub_qtdpc))+" PC)"  // LE - 04/11/2019 - Inclusão da qtde em M2
+	endif
+    oSend( oPrn, "Say", Linha    , 0140, sub->ub_item+"-"+ALLTRIM(sb1->b1_cod)    , aFontes:COURIER_NEW_09 )
+//    oSend( oPrn, "Say", Linha    , 0500, ALLTRIM(left(sb1->b1_desc,50))   , aFontes:COURIER_NEW_10 )
+    oSend( oPrn, "Say", Linha    , 0500, ALLTRIM(cDescri)   , aFontes:COURIER_NEW_10 )
+    oSend( oPrn, "Say", Linha    , 1700, ALLTRIM(sb1->b1_UM)     , aFontes:COURIER_NEW_10 )
+    oSend( oPrn, "Say", Linha    , 1770, ALLTRIM(sub->ub_tes)    , aFontes:COURIER_NEW_10 )
+	if sub->ub_quant - int(sub->ub_quant) <> 0
+	    oSend( oPrn, "Say", Linha    , 1840, trans(sub->ub_quant  ,"@E 9,999.99")      , aFontes:COURIER_NEW_09 )
+	else
+	    oSend( oPrn, "Say", Linha    , 1840, trans(sub->ub_quant  ,"@E 999,999")      , aFontes:COURIER_NEW_09 )
+    endif
+    oSend( oPrn, "Say", Linha    , 1920, trans(sub->ub_vrunit ,"@E 999,999.9999") , aFontes:COURIER_NEW_09 )
+	if sub->ub_dtentre = dDatabase
+		reclock("SUB",.f.)
+		sub->ub_dtentre := dEntr
+		MsUnLock()
+	endif
+
+	if sub->ub_tes$"543*559"
+	    oSend( oPrn, "Say", Linha    , 2120, trans(sub->(ub_quant*ub_vrunit),"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+		nDescZfr += sub->(ub_quant*ub_vrunit) - sub->ub_vlritem
+		nDescZfr += sub->(ub_quant*ub_vrunit)* 0.1065
+		lSuframa := .t.
+	else
+	    oSend( oPrn, "Say", Linha    , 2120, trans(sub->(ub_quant*ub_vrunit),"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+		if sub->(ub_quant*ub_vrunit) <> sub->ub_vlritem
+			RecLock("SUB",.F.)
+			sub->ub_vlritem := sub->(ub_quant*ub_vrunit)
+			MsUnLock()
+		endif
+//	    oSend( oPrn, "Say", Linha    , 2140, trans(sub->ub_vlritem,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+    endif
+    Linha := Linha+50 
+//    If Linha >= 2500
+    If Linha >= 2300
+	Linha := Linha+200
+	oSend( oPrn, "Say", Linha, 0150, "Continua ..."  , aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+	ENCERRA_PAGINA
+	COMECA_PAGINA
+	nPg++
+	Linha := Linha+50
+	oSend( oPrn, "Say", Linha, 0150, "Espelhos Leao"  , aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+//	oSend( oPrn, "Say", Linha, 0950, "PEDIDO "+sc5->c5_num, aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+	oSend( oPrn, "Say", Linha, 2050, "Pag. "+strzero(npg,3), aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+	Cabec()
+    Endif
+	nTotQtd += sub->ub_quant
+	nTotVal += sub->(ub_quant*ub_vrunit) //sub->ub_vlritem
+	Select SC6
+	Seek xFilial()+sub->(UB_NumPV+UB_itemPV)
+	//RecLock("SC6",.f.)
+	//sc6->C6_ENTREG := dEntr            
+	//MsUnLock()
+	if sua->ua_setor = 'A'
+		Seek xFilial()+"P"+substr(sub->UB_NumPV,2,5)+sub->UB_itemPV
+		//RecLock("SC6",.f.)
+		//sc6->C6_ENTREG := dEntr            
+		//MsUnLock()
+	Endif
+	
+    Select SUB
+    Skip
+Enddo
+nFator := 1         
+if sua->ua_setor = 'A'
+	nFator := 2
+endif
+
+oSend(oPrn,"Line", linha, 0130,linha, 2400 ) 
+linha := linha + 50
+oSend( oPrn, "Say", Linha    , 0200, "Entrega para  "+dtoc(dEntr) , aFontes:TIMES_NEW_ROMAN_12_NEGRITO )
+oSend( oPrn, "Say", Linha    , 1400, "Total do Pedido  " , aFontes:COURIER_NEW_09 )
+if sub->ub_quant - int(sub->ub_quant) <> 0
+oSend( oPrn, "Say", Linha    , 1840, trans(nTotQtd ,"@E 9,999.99") , aFontes:COURIER_NEW_09 )
+else
+oSend( oPrn, "Say", Linha    , 1840, trans(nTotQtd ,"@E 999,999") , aFontes:COURIER_NEW_09 )
+endif
+oSend( oPrn, "Say", Linha    , 2120, trans(nTotVal  ,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+if lSuframa // nDescZfr <> 0                                                       
+	nValSuframa := (ntotval+ (nDescZfr)-sua->ua_valbrut)/nFator
+	linha := linha + 50
+	oSend( oPrn, "Say", Linha    , 1400, "Desc.Zona Franca " , aFontes:COURIER_NEW_09 )
+//	oSend( oPrn, "Say", Linha    , 2140, trans(nDescZfr/nFator ,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+	oSend( oPrn, "Say", Linha    , 2120, trans(nValSuframa ,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+	linha := linha + 50
+	oSend( oPrn, "Say", Linha    , 1400, "Total Liquido    " , aFontes:COURIER_NEW_09 )
+//	oSend( oPrn, "Say", Linha    , 2140, trans(nTotVal + (nDescZfr) - (nDescZfr/nFator) ,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+	oSend( oPrn, "Say", Linha    , 2120, trans(nTotVal - nValSuframa  ,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+//	oSend( oPrn, "Say", Linha    , 2120, trans(sua->ua_valbrut ,"@E 99,999,999.99") , aFontes:COURIER_NEW_09 )
+endif
+
+** Rodapé do relatório
+limpserv := .f.                       
+/*
+nLin := Linha + 200
+If ! Empty(SUA->UA_CODOBS)
+	cObs := MSMM(SUA->UA_CODOBS,73)
+	nInd := 1
+	impcab := .t.
+	While .T.
+		if impcab
+			oSend( oPrn, "Say", nLin , 0100, "Observação para a produção : " , aFontes:COURIER_NEW_09 )
+			nLin := nLin + 60
+			impcab := .f.
+		endif
+		cLinha := Substr(cObs,nInd,73)
+		If ! Empty(cLinha)
+			oSend( oPrn, "Say", nLin , 0130, cLinha , aFontes:COURIER_NEW_09 )
+			nLin := nLin + 50
+		Else
+			Exit
+		EndIf
+		nInd := nInd + 73
+	End
+EndIf
+*/
+
+if sa1->a1_codbar == 'S'
+	oSend( oPrn, "Say", 2350    , 0130, "P R O D U T O   C O M  C O D I G O  D E  B A R R A S" , aFontes:COURIER_NEW_09 )
+endif
+oSend( oPrn, "Say", 2400    , 0130, "Obs:"+sua->ua_obs1 , aFontes:COURIER_NEW_09 )
+
+nLin := 2450
+
+cMemo     := alltrim( MSMM(SUA->UA_CODOBS) )
+nMemCount := MlCount( cMemo ,100 )
+
+cLinha := ''
+If !Empty( nMemCount )
+	For nLoop := 1 To nMemCount
+		cLinha += trim(MemoLine( cMemo, 100, nLoop ,2,.t.))+"  "
+		if len(trim(cLinha))>80 .or. nLoop = nMemCount     // novo - para quebrar a linha apenas com 132 caracteres
+			oSend( oPrn, "Say", nLin , 0130, StrTran( StrTran( cLinha, Chr(13), "" ), Chr(10), "" ) , aFontes:COURIER_NEW_09 )
+			nLin := nLin + 50
+			cLinha := ''
+		endif
+	Next
+Endif
+/*
+If ! Empty(SUA->UA_CODOBS)
+	cObs := MSMM(SUA->UA_CODOBS,73)
+	nInd := 1
+	While .T.
+//		cLinha := Substr(cObs,nInd,73)
+		cLinha := MSMM(SUA->UA_CODOBS,80,nInd)
+		If ! Empty(cLinha)
+			oSend( oPrn, "Say", nLin , 0130, cLinha , aFontes:COURIER_NEW_09 )
+			nLin := nLin + 50
+		Else
+			Exit
+		EndIf
+//		nInd := nInd + 73
+		nInd++
+	End
+EndIf
+*/
+
+oSend( oPrn, "Say", 2600    , 0630, "Local de entrega "+AllTrim(SUA->UA_ENDENT)+"  "+AllTrim(SUA->UA_BAIRROE)+"  "+AllTrim(SUA->UA_MUNE) + " / " + SUA->UA_ESTE , aFontes:COURIER_NEW_09 )
+//oSend( oPrn, "Say", 2700    , 0130, "Peso Bruto :"+Transform(SC5->C5_PBruto, "@E 99,999.99" )+" Kg", aFontes:COURIER_NEW_10 )
+//oSend( oPrn, "Say", 2700    , 0800, "Volumes :"+Transform(SC5->C5_Volume1, "@E 99999" )+" "+SC5->C5_Especi1, aFontes:COURIER_NEW_10 )
+oSend( oPrn, "Say", 2700    , 1400, " Conferido por :_____________ Data  :____________" , aFontes:COURIER_NEW_10 )
+linha := 2800
+oSend( oPrn, "Say", Linha    , 0130, "NºNota Fiscal :________________ " , aFontes:COURIER_NEW_10 )
+oSend( oPrn, "Say", Linha    , 0930, "Data da Nota  :________________ " , aFontes:COURIER_NEW_10 )
+oSend( oPrn, "Say", Linha    , 1650, "Data saída    :________________ " , aFontes:COURIER_NEW_10 )
+
+
+Return .T.
+
+***********************
+Static function Cabec()
+***********************
+
+Linha := Linha+50
+oPrn:Box(linha,0130,linha+060,2400)  
+oSend(oPrn,"Line", linha, 0490,linha+060, 0490 ) //Desc
+oSend(oPrn,"Line", linha, 1690,linha+060, 1690 ) //Um
+oSend(oPrn,"Line", linha, 1760,linha+060, 1760 ) //TES
+oSend(oPrn,"Line", linha, 1850,linha+060, 1850 ) //Quant
+oSend(oPrn,"Line", linha, 1990,linha+060, 1990 ) //Val Unit
+oSend(oPrn,"Line", linha, 2190,linha+060, 2190 ) //Val Total
+
+oSend( oPrn, "Say",  Linha, 0140, "Codigo"           , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say",  Linha, 0501, "Desc.Material"    , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say",  Linha, 1700, "Un"               , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say",  Linha, 1770, "TES "             , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say",  Linha, 1860, "Quant."           , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say",  Linha, 2000, "Valor Un."        , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+oSend( oPrn, "Say",  Linha, 2200, "Valor Tot"        , aFontes:TIMES_NEW_ROMAN_10_NEGRITO )
+Linha := Linha+80 
