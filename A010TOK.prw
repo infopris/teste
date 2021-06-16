@@ -21,3 +21,5 @@ If (__cUserID $ cXUser)
 Endif
 
 Return( lRet )
+
+//Teste
