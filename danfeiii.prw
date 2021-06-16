@@ -14,18 +14,19 @@
 #DEFINE HMARGEM   030
 #DEFINE VMARGEM   030
 #DEFINE MAXITEM   010                                                // M·ximo de produtos para a primeira p·gina
-#DEFINE MAXITEMP2 044                                                // M·ximo de produtos para a pagina 2 (caso nao utilize a opÁ„o de impressao em verso)
-#DEFINE MAXITEMP3 015                                                // M·ximo de produtos para a pagina 2 (caso utilize a opÁ„o de impressao em verso) - Tratamento implementado para atender a legislacao que determina que a segunda pagina de ocupar 50%.
-#DEFINE MAXITEMP4 022                                                // M·ximo de produtos para a pagina 2 (caso contenha main info cpl que suporta a primeira pagina)
+#DEFINE MAXITEMP2 022                                                // p·gina 02 em diante com inf. complementar
+#DEFINE MAXITEMP2F 042                                               // pagina 2 em diante sem informaÁ„o complementar
+#DEFINE MAXITEMP3 022                                                // M·ximo de produtos para a pagina 2 (caso utilize a opÁ„o de impressao em verso) - Tratamento implementado para atender a legislacao que determina que a segunda pagina de ocupar 50%.
 #DEFINE MAXITEMC  012                                                // M·xima de caracteres por linha de produtos/serviÁos
 #DEFINE MAXMENLIN 130                                                // M·ximo de caracteres por linha de dados adicionais
 #DEFINE MAXMSG    006                                                // M·ximo de dados adicionais na primeira p·gina
-#DEFINE MAXMSG2   019                                                // M·ximo de dados adicionais na segunda p·gina
+#DEFINE MAXMSG2   018                                                // M·ximo de dados adicionais na segunda p·gina
 #DEFINE MAXBOXH   800                                                // Tamanho maximo do box Horizontal
 #DEFINE MAXBOXV   600
 #DEFINE INIBOXH   -10
 #DEFINE MAXMENL   080                                                // M·ximo de caracteres por linha de dados adicionais
 #DEFINE MAXVALORC 009                                                // M·ximo de caracteres por linha de valores numÈricos
+#DEFINE MAXCODPRD 040                                                // M·ximo de caracteres do codigo de produtos/servicos
 
 /*/
 ‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
@@ -55,6 +56,7 @@ User Function DANFE_P1(	cIdEnt	, cVal1		, cVal2, oDanfe,;
 Local aArea     := GetArea() 
 Local lExistNfe := .F.
 Local lRet		:= .T.
+local lJob		:= .F.
 
 Default lIsLoja	:= .F.	// indica se foi chamado de alguma rotina do SIGALOJA
 
@@ -62,38 +64,46 @@ Private nConsNeg := 0.4 // Constante para concertar o c·lculo retornado pelo Get
 Private nConsTex := 0.38 // Constante para concertar o c·lculo retornado pelo GetTextWidth.
 private oRetNF
 
+lJob := (oDanfe:lInJob .or. oSetup == nil)
+
+Public  nMaxItem :=  MAXITEM
+ 
 oDanfe:SetResolution(78) // Tamanho estipulado para a Danfe
 oDanfe:SetLandscape()
 oDanfe:SetPaperSize(DMPAPER_A4)
 oDanfe:SetMargin(60,60,60,60)
-oDanfe:lServer := oSetup:GetProperty(PD_DESTINATION)==AMB_SERVER
+oDanfe:lServer := if( lJob, .T., oSetup:GetProperty(PD_DESTINATION)==AMB_SERVER )
 // ----------------------------------------------
 // Define saida de impress„o
 // ---------------------------------------------
-If oSetup:GetProperty(PD_PRINTTYPE) == IMP_SPOOL
+If lJob .or. oSetup:GetProperty(PD_PRINTTYPE) == IMP_PDF
+	oDanfe:nDevice := IMP_PDF
+	// ----------------------------------------------
+	// Define para salvar o PDF
+	// ----------------------------------------------
+	oDanfe:cPathPDF := if ( lJob , SuperGetMV('MV_RELT',,"\SPOOL\") , oSetup:aOptions[PD_VALUETYPE] )
+elseIf oSetup:GetProperty(PD_PRINTTYPE) == IMP_SPOOL
 	oDanfe:nDevice := IMP_SPOOL
 	// ----------------------------------------------
 	// Salva impressora selecionada
 	// ----------------------------------------------
 	fwWriteProfString(GetPrinterSession(),"DEFAULT", oSetup:aOptions[PD_VALUETYPE], .T.)
 	oDanfe:cPrinter := oSetup:aOptions[PD_VALUETYPE]
-ElseIf oSetup:GetProperty(PD_PRINTTYPE) == IMP_PDF
-	oDanfe:nDevice := IMP_PDF
-	// ----------------------------------------------
-	// Define para salvar o PDF
-	// ----------------------------------------------
-	oDanfe:cPathPDF := oSetup:aOptions[PD_VALUETYPE]
 Endif
 
 Private PixelX := odanfe:nLogPixelX()
 Private PixelY := odanfe:nLogPixelY()
 
-RPTStatus( {|lEnd| DANFEProc(@oDanfe, @lEnd, cIDEnt, Nil, Nil, @lExistNFe, lIsLoja)}, "Imprimindo DANFE..." )	
+if lJob
+	DANFEProc(@oDanfe, , cIDEnt, Nil, Nil, @lExistNFe, lIsLoja)
+else
+	RPTStatus( {|lEnd| DANFEProc(@oDanfe, @lEnd, cIDEnt, Nil, Nil, @lExistNFe, lIsLoja)}, "Imprimindo DANFE..." )	
+endif
 
 If lExistNFe
 	oDanfe:Preview()	//Visualiza antes de imprimir
 Else
-	If !lIsLoja
+	If !lIsLoja .and. !lJob
 		Aviso("DANFE","Nenhuma NF-e a ser impressa nos parametros utilizados.",{"OK"},3)
 	EndIf
 EndIf
@@ -138,7 +148,6 @@ Local aArea      := GetArea()
 Local aAreaSF3   := {}
 Local aNotas     := {}
 Local aXML       := {}
-Local aAutoriza  := {}
 Local cNaoAut    := ""
 
 Local cAliasSF3  := "SF3"
@@ -174,14 +183,15 @@ Local nLenarray	 := 0
 Local nCursor	 := 0
 Local lBreak	 := .F.
 Local aGrvSF3    := {}
-Local lDanfeSimpl
 Local lUsaColab	:=  UsaColaboracao("1") 
 Local lMVGfe	:= GetNewPar( "MV_INTGFE", .F. ) // Se tem integraÁ„o com o GFE
 Local lContinua := .T.
 local lChave	:= .F.
 local cChavSF3 := ""
 Local lVerPerg := .T.
+Local nTotalReg := 0
 
+default lEnd := .F.
 Default lIsLoja	:= .F.
 
 If lIsLoja
@@ -189,7 +199,7 @@ If lIsLoja
 	MV_PAR01 := SF2->F2_DOC 
 	MV_PAR02 := SF2->F2_DOC
 	MV_PAR03 := SF2->F2_SERIE
-	MV_PAR04 := 1	//NF de Saida
+	MV_PAR04 := 2	//[Operacao] NF de Saida: 2
 	MV_PAR05 := 1	//Frente e Verso - 1:Sim
 	MV_PAR06 := 2	//DANFE simplificado - 2:Nao
 Else
@@ -205,7 +215,12 @@ Else
 	Endif
 	
 	If lVerPerg
-		lContinua := Pergunte("NFSIGW",.T.)  .AND. ( (!Empty(MV_PAR06) .AND. MV_PAR06 == 2) .OR. Empty(MV_PAR06) )
+		if !oDanfe:lInJob
+			lContinua := Pergunte("NFSIGW",.T.)  .AND. ( (!Empty(MV_PAR06) .AND. MV_PAR06 == 2) .OR. Empty(MV_PAR06) )
+		else
+			Pergunte("NFSIGW",.F.)
+			lContinua := ( (!Empty(MV_PAR06) .AND. MV_PAR06 == 2) .OR. Empty(MV_PAR06) )
+		endif
 	EndIf
 EndIf
 
@@ -222,10 +237,10 @@ If lContinua
 			 	If lSdoc                                         
 					cCampos += ", SF3.F3_SDOC" 
 					cSerie := Padr(MV_PAR03,TamSx3("F3_SDOC")[1])
-					cWhere := "%SubString(SF3.F3_CFO,1,1) < '5' AND SF3.F3_FORMUL='S' AND SF3.F3_SDOC = '"+ cSerie + "' AND SF3.F3_ESPECIE = 'SPED'" 			
+					cWhere := "%SubString(SF3.F3_CFO,1,1) < '5' AND SF3.F3_FORMUL='S' AND SF3.F3_SDOC = '"+ cSerie + "' AND SF3.F3_ESPECIE IN ('SPED','NFCE') "
 				Else
 					cSerie := Padr(MV_PAR03,TamSx3("F3_SERIE")[1])
-					cWhere := "%SubString(SF3.F3_CFO,1,1) < '5' AND SF3.F3_FORMUL='S' AND SF3.F3_SERIE = '"+ cSerie + "' AND SF3.F3_ESPECIE = 'SPED'" 
+					cWhere := "%SubString(SF3.F3_CFO,1,1) < '5' AND SF3.F3_FORMUL='S' AND SF3.F3_SERIE = '"+ cSerie + "' AND SF3.F3_ESPECIE IN ('SPED','NFCE') "
 				Endif
 
 			ElseIf MV_PAR04==2
@@ -233,28 +248,27 @@ If lContinua
 			 	If lSdoc                                         
 					cCampos += ", SF3.F3_SDOC" 
 					cSerie := Padr(MV_PAR03,TamSx3("F3_SDOC")[1])
-					cWhere := "%SubString(SF3.F3_CFO,1,1) >= '5' AND SF3.F3_SDOC = '"+ cSerie + "' AND SF3.F3_ESPECIE = 'SPED'"		
+					cWhere := "%SubString(SF3.F3_CFO,1,1) >= '5' AND SF3.F3_SDOC = '"+ cSerie + "' AND SF3.F3_ESPECIE IN ('SPED','NFCE') "
 				Else
 					cSerie := Padr(MV_PAR03,TamSx3("F3_SERIE")[1])
-					cWhere := "%SubString(SF3.F3_CFO,1,1) >= '5' AND SF3.F3_SERIE = '"+ cSerie + "' AND SF3.F3_ESPECIE = 'SPED'" 
+					cWhere := "%SubString(SF3.F3_CFO,1,1) >= '5' AND SF3.F3_SERIE = '"+ cSerie + "' AND SF3.F3_ESPECIE IN ('SPED','NFCE') "
 				Endif	
 			Else
 			
 				If lSdoc                                         
 					cCampos += ", SF3.F3_SDOC" 
 					cSerie := Padr(MV_PAR03,TamSx3("F3_SDOC")[1])
-					cWhere := "%SF3.F3_SDOC = '"+ cSerie + "' AND SF3.F3_ESPECIE = 'SPED'" 		
+					cWhere := "%SF3.F3_SDOC = '"+ cSerie + "' AND SF3.F3_ESPECIE IN ('SPED','NFCE') "
 				Else
 					cSerie := Padr(MV_PAR03,TamSx3("F3_SERIE")[1])
-					cWhere := "%SF3.F3_SERIE = '"+ cSerie + "' AND SF3.F3_ESPECIE = 'SPED'" 
+					cWhere := "%SF3.F3_SERIE = '"+ cSerie + "' AND SF3.F3_ESPECIE IN ('SPED','NFCE') "
 				Endif	
 			
 			EndIf
-          	If lSdoc 
-				If !Empty(MV_PAR07) .Or. !Empty(MV_PAR08)
-					cWhere += " AND (SF3.F3_EMISSAO >= '"+ SubStr(DTOS(MV_PAR07),1,4) + SubStr(DTOS(MV_PAR07),5,2) + SubStr(DTOS(MV_PAR07),7,2) + "' AND SF3.F3_EMISSAO <= '"+ SubStr(DTOS(MV_PAR08),1,4) + SubStr(DTOS(MV_PAR08),5,2) + SubStr(DTOS(MV_PAR08),7,2) + "')"
-				EndIF
+			If !Empty(MV_PAR07) .Or. !Empty(MV_PAR08)
+				cWhere += " AND (SF3.F3_EMISSAO >= '"+ SubStr(DTOS(MV_PAR07),1,4) + SubStr(DTOS(MV_PAR07),5,2) + SubStr(DTOS(MV_PAR07),7,2) + "' AND SF3.F3_EMISSAO <= '"+ SubStr(DTOS(MV_PAR08),1,4) + SubStr(DTOS(MV_PAR08),5,2) + SubStr(DTOS(MV_PAR08),7,2) + "')"
 			EndIF
+
 			
 			cWhere += "%"
 			
@@ -296,7 +310,7 @@ If lContinua
 			cCondicao 		+= 'SF3->F3_SERIE =="'+ MV_PAR03+'" .And. '
 			cCondicao 		+= 'SF3->F3_NFISCAL >="'+ MV_PAR01+'" .And. '
 			cCondicao		+= 'SF3->F3_NFISCAL <="'+ MV_PAR02+'" .And. '
-			cCondicao		+= 'SF3->F3_ESPECIE = "SPED" .And. '
+			cCondicao		+= 'SF3->F3_ESPECIE IN ("SPED","NFCE") .And. '
 			cCondicao		+= 'Empty(SF3->F3_DTCANC)'
 			IndRegua(cAliasSF3, cIndex, cChave, , cCondicao)
 			nIndex := RetIndex(cAliasSF3)
@@ -358,7 +372,7 @@ If lContinua
 					//Tratamento do TOTVS ColaboraÁ„o
 					aXml := GetXMLColab(aNotas,@cModalidade,lUsaColab)
 				else
-					aXml := GetXML(cIdEnt,aNotas,@cModalidade)
+					aXml := GetXML(cIdEnt,aNotas,@cModalidade, oDanfe:lInJob)
 				endif	
 
 				nLenNotas := Len(aNotas)
@@ -413,17 +427,17 @@ If lContinua
 				   						SF2->F2_DAUTNFE	:= IIF(!Empty(aXML[nX][7]),aXML[nX][7],SToD("  /  /    "))
 									EndIf
 									MsUnlock()
-								// Grava quando a nota for Transferencia entre filiais 
-								IF SF2->(FieldPos("F2_FILDEST"))> 0 .And. SF2->(FieldPos("F2_FORDES"))> 0 .And.SF2->(FieldPos("F2_LOJADES"))> 0 .And.SF2->(FieldPos("F2_FORMDES"))> 0 .And. !EMPTY (SF2->F2_FORDES)  
-							       SF1->(dbSetOrder(1))
-							    	If SF1->(MsSeek(SF2->F2_FILDEST+SF2->F2_DOC+SF2->f2_SERIE+SF2->F2_FORDES+SF2->F2_LOJADES+SF2->F2_FORMDES))
-							    		If EMPTY(SF1->F1_CHVNFE)	
-								    		RecLock("SF1",.F.)
-									    		SF1->F1_CHVNFE := SubStr(NfeIdSPED(aXML[nX][2],"Id"),4)
-								    		MsUnlock()
-								    	EndIf	
-							    	Endif					    
-							    EndiF
+									// Grava quando a nota for Transferencia entre filiais 
+									IF SF2->(FieldPos("F2_FILDEST"))> 0 .And. SF2->(FieldPos("F2_FORDES"))> 0 .And.SF2->(FieldPos("F2_LOJADES"))> 0 .And.SF2->(FieldPos("F2_FORMDES"))> 0 .And. !EMPTY (SF2->F2_FORDES)  
+										SF1->(dbSetOrder(1))
+										If SF1->(MsSeek(SF2->F2_FILDEST+SF2->F2_DOC+SF2->f2_SERIE+SF2->F2_FORDES+SF2->F2_LOJADES+SF2->F2_FORMDES))
+											If EMPTY(SF1->F1_CHVNFE)	
+												RecLock("SF1",.F.)
+													SF1->F1_CHVNFE := SubStr(NfeIdSPED(aXML[nX][2],"Id"),4)
+												MsUnlock()
+											EndIf	
+										Endif					    
+									EndiF
 								ElseIF MsSeek(xFilial("SF2")+aNotas[nX][05]+aNotas[nX][04]+aNotas[nX][06]+aNotas[nX][07]) .And. Alltrim(aXML[nX][8])$"1,3,4,6".Or. ( Alltrim(aXML[nX][8]) $ "2,5"  .And. cModalidade == "7"  ) //Contingencia FSDA
 									RecLock("SF2")
 									SF2->F2_CHVNFE := SubStr(NfeIdSPED(aXML[nX][2],"Id"),4)
@@ -432,13 +446,18 @@ If lContinua
 								
 								// AtualizaÁ„o dos campos da Tabela GFE
 								if FindFunction("GFECHVNFE") .and. lMVGfe  // IntegraÁ„o com o GFE 
-										
-									dbSelectArea("SA1")
-									dbSetOrder(1)
-									If SA1->(MsSeek(xFilial("SA1")+ SF2->F2_CLIENTE + SF2->F2_LOJA,.T.))
-										
-										GFECHVNFE(xFilial("SF2"),SF2->F2_SERIE,SF2->F2_DOC,SF2->F2_TIPO,SA1->A1_CGC,SA1->A1_COD,SA1->A1_LOJA,SF2->F2_CHVNFE,SF2->F2_FIMP)
-										
+									if  SF2->F2_TIPO $ "D|B"    // Documento com tipo de devoluÁ„o ou "Utilizar Fornecedor"
+										dbSelectArea("SA2")
+										dbSetOrder(1)
+										If SA2->(MsSeek(xFilial("SA2")+ SF2->F2_CLIENTE + SF2->F2_LOJA,.T.))
+											GFECHVNFE(xFilial("SF2"),SF2->F2_SERIE,SF2->F2_DOC,SF2->F2_TIPO,SA2->A2_CGC,SA2->A2_COD,SA2->A2_LOJA,SF2->F2_CHVNFE,SF2->F2_FIMP, "S")
+										EndIf
+									else
+										dbSelectArea("SA1")
+										dbSetOrder(1)
+										If SA1->(MsSeek(xFilial("SA1")+ SF2->F2_CLIENTE + SF2->F2_LOJA,.T.))
+											GFECHVNFE(xFilial("SF2"),SF2->F2_SERIE,SF2->F2_DOC,SF2->F2_TIPO,SA1->A1_CGC,SA1->A1_COD,SA1->A1_LOJA,SF2->F2_CHVNFE,SF2->F2_FIMP, "S")
+										Endif
 									endif
 								endif 
 
@@ -495,7 +514,7 @@ If lContinua
 							// @autor: Douglas Parreja	@since 30/10/2017												
 							//-----------------------------------------------------------------------												
 							oRetNF := XmlParser(aXML[nX][2],"_",@cAviso,@cErro)				 	
-							if type("oRetNF:_NFEPROC") <> "U"
+							if ValAtrib("oRetNF:_NFEPROC") <> "U"
 								oNfe := WSAdvValue( oRetNF,"_NFEPROC","string",NIL,NIL,NIL,NIL,NIL)				
 							else
 								oNfe := oRetNF
@@ -503,7 +522,7 @@ If lContinua
 							
 							oNfeDPEC := XmlParser(aXML[nX][4],"_",@cAviso,@cErro)
 							If Empty(cAviso) .And. Empty(cErro)
-								ImpDet(@oDanfe,oNFe,cAutoriza,cModalidade,oNfeDPEC,cCodAutDPEC,aXml[nX][6],aXml[nX][7],aNotas[nX])
+								ImpDet(@oDanfe,oNFe,cAutoriza,cModalidade,oNfeDPEC,cCodAutDPEC,aXml[nX][6],aXml[nX][7],aNotas[nX],aXml[nX][11])
 								lExistNfe := .T.
 							EndIf
 							oNfe     := nil
@@ -520,8 +539,10 @@ If lContinua
 								cNaoAut := "A impress„o do DANFE referente a Nota/SÈrie " + SF2->F2_DOC + "/" + SF2->F2_SERIE + " n„o ser· realizada pelo motivo abaixo:"
 								cNaoAut += CRLF + "[" + aXML[nX][9] + ' - ' + aXML[nX][10] + "]"
 								cNaoAut += CRLF + "Se possÌvel, faÁa o ajuste e retransmita a NF-e."
-										
-								Aviso( "SPED", cNaoAut, {"Continuar"}, 3 )
+
+								if !oDanfe:lInJob
+									Aviso( "SPED", cNaoAut, {"Continuar"}, 3 )
+								endif
 							EndIf	
 
 						Else
@@ -542,7 +563,7 @@ If lContinua
 			Ferase(cIndex+OrdBagExt())
 		EndIf
 		
-		If !lIsLoja .AND. !Empty(cNaoAut)
+		If !lIsLoja .AND. !Empty(cNaoAut) .and. !oDanfe:lInJob
 			Aviso("SPED","As seguintes notas n„o foram autorizadas: "+CRLF+CRLF+cNaoAut,{"Ok"},3)
 		EndIf
 
@@ -554,7 +575,7 @@ If lContinua
 		//≥webService, e caso exista ser· impresso.                   ≥
 		//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
 		nLenarray := Val(MV_PAR02) - Val(Alltrim(MV_PAR01))
-		nCursor   := Val(MV_PAR01)
+		nCursor   := 1
 
 		While  !lBreak  .And. nLenarray >= 0
 
@@ -582,11 +603,11 @@ If lContinua
 				 	If lSdoc  
 				 		cCampos += "%SF2.F2_FILIAL FILIAL, SF2.F2_DOC DOC, SF2.F2_SERIE SERIE, SF2.F2_SDOC SDOC%"                                        
 						cSerie := Padr(MV_PAR03,TamSx3("F2_SDOC")[1])
-						cWhere := "%SF2.D_E_L_E_T_= '' AND SF2.F2_FILIAL ='"+xFilial("SF2")+"' AND SF2.F2_DOC <='"+MV_PAR02+ "' AND SF2.F2_DOC >='" + MV_PAR01 + "' AND SF2.F2_SDOC ='"+ cSerie + "' AND SF2.F2_ESPECIE = 'SPED' ORDER BY SF2.F2_DOC%"			
+						cWhere := "%SF2.D_E_L_E_T_= '' AND SF2.F2_FILIAL ='"+xFilial("SF2")+"' AND SF2.F2_DOC <='"+MV_PAR02+ "' AND SF2.F2_DOC >='" + MV_PAR01 + "' AND SF2.F2_SDOC ='"+ cSerie + "' AND SF2.F2_ESPECIE IN ('SPED','NFCE') ORDER BY SF2.F2_DOC%"
 					Else
 						cCampos += "%SF2.F2_FILIAL FILIAL, SF2.F2_DOC DOC, SF2.F2_SERIE SERIE%" 
 						cSerie := Padr(MV_PAR03,TamSx3("F2_SERIE")[1])
-						cWhere := "%SF2.D_E_L_E_T_= '' AND SF2.F2_FILIAL ='"+xFilial("SF2")+"' AND SF2.F2_DOC <='"+MV_PAR02+ "' AND SF2.F2_DOC >='" + MV_PAR01 + "' AND SF2.F2_SERIE ='"+ cSerie + "' AND SF2.F2_ESPECIE = 'SPED' ORDER BY SF2.F2_DOC%"			
+						cWhere := "%SF2.D_E_L_E_T_= '' AND SF2.F2_FILIAL ='"+xFilial("SF2")+"' AND SF2.F2_DOC <='"+MV_PAR02+ "' AND SF2.F2_DOC >='" + MV_PAR01 + "' AND SF2.F2_SERIE ='"+ cSerie + "' AND SF2.F2_ESPECIE IN ('SPED','NFCE') AND SF2.F2_EMISSAO >= '" + %exp:DtoS(MV_PAR07)% + "' AND SF2.F2_EMISSAO <= '" + %exp:DtoS(MV_PAR08)% + "' ORDER BY SF2.F2_DOC%"
 					Endif
 				
 				EndIf
@@ -603,6 +624,9 @@ If lContinua
 				WHERE
 				%Exp:cWhere%
 			EndSql
+
+			nTotalReg := Contar(cAliasSFX, "!EOF()")
+			(cAliasSFX)->(DBGoTop())
 
 			If lSdoc
 				cSerId := (cAliasSFX)->SDOC
@@ -630,7 +654,7 @@ If lContinua
 					aAdd(Atail(aNotas),(cAliasSFX)->DOC)
 					aadd(Atail(aNotas),"")
 					aadd(Atail(aNotas),"")
-					If nCursor==Val(MV_PAR02) .or. (cAliasSFX)->(Eof ())
+					If ( (cAliasSFX)->(Eof()) ) .OR. (nCursor >= nTotalReg)
 						lBreak :=.T.
 						nx:=20
 					EndIF
@@ -638,20 +662,12 @@ If lContinua
 					( cAliasSFX )->( DbSkip() )
 				Next nX
 
-				dbSelectArea(cAliasSFX)
-				
-				If lSdoc
-					cSerId := (cAliasSFX)->SDOC
-				Else
-					cSerId := (cAliasSFX)->SERIE
-				EndIf
-			
 				aXml:={}
 				if lUsaColab
 					//Tratamento do TOTVS ColaboraÁ„o
 					aXml := GetXMLColab(aNotas,@cModalidade,lUsaColab)
 				else		
-					aXml := GetXML(cIdEnt,aNotas,@cModalidade)
+					aXml := GetXML(cIdEnt,aNotas,@cModalidade, oDanfe:lInJob)
 				endif
 				
 				nLenNotas := Len(aNotas)
@@ -660,7 +676,7 @@ If lContinua
 					dbSetOrder(1)
 					cChaveSFT	:=	(xFilial("SFT")+aNotas[nX][02]+aNotas[nX][04]+aNotas[nX][05])
 					MsSeek(cChaveSFT)				
-					If ( !Empty(aXML[nX][2]) .AND. (AllTrim((cAliasSFT)->FT_ESPECIE)== 'SPED') .Or. (lImpDir .And. !Empty(aXML[nX][2])) ) .And. Empty((cAliasSFT)->FT_DTCANC) //Realizada tal alteraÁ„o para que seja verificado antes da impress„o se a NF-e est· cancelada ou e do modelo sped
+					If ( !Empty(aXML[nX][2]) .AND. (AllTrim((cAliasSFT)->FT_ESPECIE)$'SPED,NFCE') .Or. (lImpDir .And. !Empty(aXML[nX][2])) ) .And. Empty((cAliasSFT)->FT_DTCANC) //Realizada tal alteraÁ„o para que seja verificado antes da impress„o se a NF-e est· cancelada ou e do modelo sped
 						If !Empty(aXml[nX])
 							cAutoriza		:= aXML[nX][1]
 							cCodAutDPEC	:= aXML[nX][5]
@@ -685,7 +701,7 @@ If lContinua
 						// @autor: Douglas Parreja	@since 30/10/2017												
 						//-----------------------------------------------------------------------												
 						oRetNF := XmlParser(aXML[nX][2],"_",@cAviso,@cErro)				 	
-						if type("oRetNF:_NFEPROC") <> "U"
+						if ValAtrib("oRetNF:_NFEPROC") <> "U"
 							oNfe := WSAdvValue( oRetNF,"_NFEPROC","string",NIL,NIL,NIL,NIL,NIL)				
 						else
 							oNfe := oRetNF
@@ -700,33 +716,41 @@ If lContinua
 								If MsSeek(xFilial("SF1")+aNotas[nX][05]+aNotas[nX][04]) .And. SF1->(FieldPos("F1_FIMP"))<>0 .And. Alltrim(aXML[nX][8])$"1,3,4,6" .or. ( Alltrim(aXML[nX][8]) $ "2,5"  .And. !Empty(cAutoriza) )
 									Do While !Eof() .And. SF1->F1_DOC==aNotas[nX][05] .And. SF1->F1_SERIE==aNotas[nX][04]
 										If SF1->F1_FORMUL=='S'
-											RecLock("SF1")
-											If !SF1->F1_FIMP$"D"
-												SF1->F1_FIMP := "S"
-											EndIf
-											If SF1->(FieldPos("F1_CHVNFE"))>0
-												SF1->F1_CHVNFE := SubStr(NfeIdSPED(aXML[nX][2],"Id"),4)
-											EndIf
-											If SF1->(FieldPos("F1_HAUTNFE")) > 0 .and. SF1->(FieldPos("F1_DAUTNFE")) > 0 //grava a data e hora de autorizaÁ„o da NFe
-												SF1->F1_HAUTNFE := IIF(!Empty(aXML[nX][6]),SUBSTR(aXML[nX][6],1,5),"")
-					   							SF1->F1_DAUTNFE	:= IIF(!Empty(aXML[nX][7]),aXML[nX][7],SToD("  /  /    "))
-											EndIf
-											MsUnlock()
+											if RecLock("SF1")
+												If !SF1->F1_FIMP$"D"
+													SF1->F1_FIMP := "S"
+												EndIf
+												If SF1->(FieldPos("F1_CHVNFE"))>0
+													SF1->F1_CHVNFE := SubStr(NfeIdSPED(aXML[nX][2],"Id"),4)
+												EndIf
+												If SF1->(FieldPos("F1_HAUTNFE")) > 0 .and. SF1->(FieldPos("F1_DAUTNFE")) > 0 //grava a data e hora de autorizaÁ„o da NFe
+													SF1->F1_HAUTNFE := IIF(!Empty(aXML[nX][6]),SUBSTR(aXML[nX][6],1,5),"")
+													SF1->F1_DAUTNFE	:= IIF(!Empty(aXML[nX][7]),aXML[nX][7],SToD("  /  /    "))
+												EndIf
+												SF1->(MsUnlock())
+											endif
+
+											// AtualizaÁ„o dos campos da Tabela GFE
+											if FindFunction("GFECHVNFE") .and. lMVGfe  // IntegraÁ„o com o GFE 
+												if  SF1->F1_TIPO $ "D|B"    // Documento com tipo de devoluÁ„o ou "Utilizar Fornecedor"
+													dbSelectArea("SA1")
+													dbSetOrder(1)
+													If SA1->(DbSeek(xFilial("SA1")+ SF1->F1_FORNECE + SF1->F1_LOJA))
+														GFECHVNFE(xFilial("SF1"),SF1->F1_SERIE,SF1->F1_DOC,SF1->F1_TIPO,SA1->A1_CGC,SA1->A1_COD,SA1->A1_LOJA,SF1->F1_CHVNFE,SF1->F1_FIMP, "E")
+													Endif
+												else
+													dbSelectArea("SA2")
+													dbSetOrder(1)
+													If SA2->(MsSeek(xFilial("SA2")+ SF1->F1_FORNECE + SF1->F1_LOJA,.T.))
+														GFECHVNFE(xFilial("SF1"),SF1->F1_SERIE,SF1->F1_DOC,SF1->F1_TIPO,SA2->A2_CGC,SA2->A2_COD,SA2->A2_LOJA,SF1->F1_CHVNFE,SF1->F1_FIMP, "E")
+													endif
+												endif
+											endif
 										EndIf
-										DbSkip()
+
+										SF1->(DbSkip())
 									EndDo
 								EndIf
-								// AtualizaÁ„o dos campos da Tabela GFE
-								if FindFunction("GFECHVNFE") .and. lMVGfe  // IntegraÁ„o com o GFE 
-										
-									dbSelectArea("SA2")
-									dbSetOrder(1)
-									If SA2->(MsSeek(xFilial("SA2")+ SF1->F1_FORNECE + SF1->F1_LOJA,.T.))
-										
-										GFECHVNFE(xFilial("SF1"),SF1->F1_SERIE,SF1->F1_DOC,SF1->F1_TIPO,SA2->A2_CGC,SA2->A2_COD,SA2->A2_LOJA,SF1->F1_CHVNFE,SF1->F1_FIMP)
-										
-									endif
-								endif
 							ElseIf aNotas[nX][02]=="S" .And. MV_PAR04==2 .And. (oNfe:_NFE:_INFNFE:_IDE:_TPNF:TEXT=="1")
 								dbSelectArea("SF2")
 								dbSetOrder(1)
@@ -757,14 +781,19 @@ If lContinua
 								EndIf
 								
 								// AtualizaÁ„o dos campos da Tabela GFE
-								if FindFunction("GFECHVNFE") .and. lMVGfe  // IntegraÁ„o com o GFE 
-										
-									dbSelectArea("SA1")
-									dbSetOrder(1)
-									If SA1->(MsSeek(xFilial("SA1")+ SF2->F2_CLIENTE + SF2->F2_LOJA,.T.))
-										
-										GFECHVNFE(xFilial("SF2"),SF2->F2_SERIE,SF2->F2_DOC,SF2->F2_TIPO,SA1->A1_CGC,SA1->A1_COD,SA1->A1_LOJA,SF2->F2_CHVNFE,SF2->F2_FIMP)
-										
+								if FindFunction("GFECHVNFE") .and. lMVGfe  // IntegraÁ„o com o GFE 										
+									if  SF2->F2_TIPO $ "D|B"    // Documento com tipo de devoluÁ„o ou "Utilizar Fornecedor"
+										dbSelectArea("SA2")
+										dbSetOrder(1)
+										If SA2->(MsSeek(xFilial("SA2")+ SF2->F2_CLIENTE + SF2->F2_LOJA,.T.))
+											GFECHVNFE(xFilial("SF2"),SF2->F2_SERIE,SF2->F2_DOC,SF2->F2_TIPO,SA2->A2_CGC,SA2->A2_COD,SA2->A2_LOJA,SF2->F2_CHVNFE,SF2->F2_FIMP, "S")
+										EndIf
+									else
+										dbSelectArea("SA1")
+										dbSetOrder(1)
+										If SA1->(MsSeek(xFilial("SA1")+ SF2->F2_CLIENTE + SF2->F2_LOJA,.T.))
+											GFECHVNFE(xFilial("SF2"),SF2->F2_SERIE,SF2->F2_DOC,SF2->F2_TIPO,SA1->A1_CGC,SA1->A1_COD,SA1->A1_LOJA,SF2->F2_CHVNFE,SF2->F2_FIMP, "S")
+										Endif
 									endif
 								endif
 							
@@ -811,10 +840,10 @@ If lContinua
 							EndIf
 							//-------------------------------
 							If Empty(cAviso) .And. Empty(cErro) .And. MV_PAR04==1 .And. (oNfe:_NFE:_INFNFE:_IDE:_TPNF:TEXT=="0")
-								ImpDet(@oDanfe,oNFe,cAutoriza,cModalidade,oNfeDPEC,cCodAutDPEC,aXml[nX][6],aXml[nX][7],aNotas[nX])
+								ImpDet(@oDanfe,oNFe,cAutoriza,cModalidade,oNfeDPEC,cCodAutDPEC,aXml[nX][6],aXml[nX][7],aNotas[nX],aXml[nX][11])
 								lExistNfe := .T.							
 							ElseIf Empty(cAviso) .And. Empty(cErro) .And. MV_PAR04==2 .And. (oNfe:_NFE:_INFNFE:_IDE:_TPNF:TEXT=="1")
-								ImpDet(@oDanfe,oNFe,cAutoriza,cModalidade,oNfeDPEC,cCodAutDPEC,aXml[nX][6],aXml[nX][7],aNotas[nX])
+								ImpDet(@oDanfe,oNFe,cAutoriza,cModalidade,oNfeDPEC,cCodAutDPEC,aXml[nX][6],aXml[nX][7],aNotas[nX],aXml[nX][11])
 								lExistNfe := .T.
 							EndIf
 	
@@ -829,8 +858,10 @@ If lContinua
 								cNaoAut := "A impress„o do DANFE referente a Nota/SÈrie " + SF2->F2_DOC + "/" + SF2->F2_SERIE + " n„o ser· realizada pelo motivo abaixo:"
 								cNaoAut += CRLF + "[" + aXML[nX][9] + ' - ' + aXML[nX][10] + "]."
 								cNaoAut += CRLF + "Se possÌvel, faÁa o ajuste e retransmita a NF-e."
-										
-								Aviso( "SPED", cNaoAut, {"Continuar"}, 3 )
+
+								if !oDanfe:lInJob
+									Aviso( "SPED", cNaoAut, {"Continuar"}, 3 )
+								endif
 							EndIf
 	
 						Else
@@ -845,13 +876,15 @@ If lContinua
 			EndDo
 		EndDo
 
-		If !lIsLoja .AND. !Empty(cNaoAut)
+		If !lIsLoja .AND. !Empty(cNaoAut) .and. !oDanfe:lInJob
 			Aviso("SPED","As seguintes notas n„o foram autorizadas: "+CRLF+CRLF+cNaoAut,{"Ok"},3)
 		EndIf
     EndIf
     
 ElseIf ( !Empty( MV_PAR06 ) .and. MV_PAR06 == 1 )
-	Aviso("DANFE","Impress„o de DANFE Simplificada, disponÌvel somente em formato retrato.",{"OK"},3)	    
+	if !oDanfe:lInJob
+		Aviso("DANFE","Impress„o de DANFE Simplificada, disponÌvel somente em formato retrato.",{"OK"},3)
+	endif
 EndIf
 If Len(aGrvSF3)>0 .And. SF3->(FieldPos("F3_CHVNFE"))>0
 	SF3->( dbSetOrder( 5 ))
@@ -898,7 +931,9 @@ Return(.T.)
 ±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
 ﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂ
 /*/
-Static Function ImpDet(oDanfe,oNfe,cCodAutSef,cModalidade,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,aNota)
+Static Function ImpDet(oDanfe,oNfe,cCodAutSef,cModalidade,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,aNota,cMsgRet)
+
+Default cMsgRet := ""
 
 PRIVATE oFont10N   := TFontEx():New(oDanfe,"Times New Roman",08,08,.T.,.T.,.F.)// 1
 PRIVATE oFont07N   := TFontEx():New(oDanfe,"Times New Roman",07,07,.T.,.T.,.F.)// 2
@@ -915,7 +950,7 @@ PRIVATE oFont18N   := TFontEx():New(oDanfe,"Times New Roman",17,17,.T.,.T.,.F.)/
 PRIVATE OFONT12N   := TFontEx():New(oDanfe,"Times New Roman",11,11,.T.,.T.,.F.)// 12 
 PRIVATE lUsaColab	  :=  UsaColaboracao("1")
 
-PrtDanfe(@oDanfe,oNfe,cCodAutSef,cModalidade,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,aNota)
+PrtDanfe(@oDanfe,oNfe,cCodAutSef,cModalidade,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,aNota,cMsgRet)
 
 Return(.T.)
 
@@ -944,11 +979,10 @@ Return(.T.)
 ±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
 ﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂ
 */
-Static Function PrtDanfe(oDanfe,oNFE,cCodAutSef,cModalidade,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,aNota)
+Static Function PrtDanfe(oDanfe,oNFE,cCodAutSef,cModalidade,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,aNota,cMsgRet)
 
 
 Local aAuxCabec     := {} // Array que conter· as strings de cabeÁalho das colunas de produtos/serviÁos.
-Local aTamanho      := {}
 Local aTamCol       := {} // Array que conter· o tamanho das colunas dos produtos/serviÁos.
 Local aSimpNac		:= {}  
 Local aSitTrib      := {}
@@ -967,31 +1001,18 @@ Local aEspVol       := {}
 Local aEspecie      := {}
 Local aIndImp       := {}
 Local aIndAux       := {}
-Local aLote         := {}
                            
-Local nHPage        := 0
-Local nVPage        := 0
 Local nPosV         := 0
-Local nPosVOld      := 0
-Local nPosH         := 0
-Local nPosHOld      := 0
-Local nAuxH         := 0
 Local nAuxH2        := 0
-Local nAuxV         := 0
-Local nSnBaseIcm	 := 0
-Local nSnValIcm    := 0
-Local nDetImp		 := 0
-Local nS			 := 0
+Local nSnBaseIcm	:= 0
+Local nSnValIcm		:= 0
+Local nDetImp		:= 0
+Local nS			:= 0
 Local nX            := 0
 Local nY            := 0
 Local nL            := 0
-Local nJ            := 0
-Local nW            := 0
-Local nTamanho      := 0
 Local nFolha        := 1
 Local nFolhas       := 0
-Local nItem         := 0
-Local nMensagem     := 0
 Local nBaseICM      := 0
 Local nValICM       := 0
 Local nBaseICMST    := 0
@@ -1005,15 +1026,12 @@ Local nDesc         := 0
 Local nQtd          := 0
 Local nVUnit        := 0
 Local nVolume	    := 0
-Local nLenFatura
 Local nLenVol
 Local nLenDet
 Local nLenSit
 Local nLenItens     := 0
 Local nLenMensagens := 0
-Local nLen          := 0
 Local nColuna       := 0
-Local nLinSum       := 0
 Local nE            := 0
 Local nMaxCod       := 10
 Local nMaxDes       := MAXITEMC
@@ -1024,13 +1042,9 @@ Local nZ            := 0
 
 Local cAux          := ""
 Local cSitTrib      := ""
-Local cUF           := ""
-Local cChaveCont    := ""
-Local cLogo         := FisxLogo("1")
 Local cMVCODREG     := Alltrim( SuperGetMV("MV_CODREG", ," ") )
 Local cGuarda       := "" 
 Local cEsp          := ""
-local cEndDest      := ""
 Local cXJust		:= ""
 Local cDhCont		:= ""
 
@@ -1042,14 +1056,16 @@ Local lConverte     := GetNewPar("MV_CONVERT",.F.)
 Local lImpSimpN		:= GetNewPar("MV_IMPSIMP",.F.)
 Local lMv_ItDesc    := Iif( GetNewPar("MV_ITDESC","N")=="S", .T., .F. )
 Local lNFori2       := .T.
-Local lCompleECF    := .F.
 Local lEntIpiDev   	:= GetNewPar("MV_EIPIDEV",.F.) /*Apenas para nota de entrada de DevoluÁ„o de ipi. .T.-SÈra destacado no cabeÁalho + inf.compl/.F.-Ser· destacado apenas em inf.compl*/
-
+Local lVerso		:= .F. // Impress„o de DANFE no verso?
 Local lPontilhado 	:= .F.
+
 Local aAuxCom 		:= {}    	
-Local cUnCom		:= ""
-Local nQtdCom		:= 0
-Local nVUnitCom		:= 0
+Local cUnTrib		:= ""
+Local nQtdTrib		:= 0
+Local nVUnitTrib	:= 0
+
+local aMsgRet 		:= {}
 
 // RCIMS de MG
 Local lUf_MG		:= ( SuperGetMv("MV_ESTADO") $ "MG" )	// Criado esta variavel para atender o RICMS de MG para totalizar por CFOP
@@ -1059,22 +1075,32 @@ Local cCfop			:= ""
 Local cCfopAnt		:= ""
 Local aItensAux     := {}
 Local aArray		:= {}
+Local aRetirada     := {}
+Local aEntrega      := {}
+
+local cMarca		:= ""
+local cNumeracao	:= ""
+local aMarca		:= {}
+local aNumeracao	:= {}
 
 Default cDtHrRecCab := ""
 Default dDtReceb    := CToD("")
 
+Private lNFCE 		:= Substr(oNFe:_NFe:_InfNfe:_ID:Text,24,2) == "65"
 Private aInfNf      := {}
 
 Private oDPEC       := oNfeDPEC
 Private oNF         := oNFe:_NFe
 Private oEmitente   := oNF:_InfNfe:_Emit
 Private oIdent      := oNF:_InfNfe:_IDE
-Private oDestino    := oNF:_InfNfe:_Dest
+Private oDestino    := IIf(Type("oNF:_InfNfe:_Dest")=="U",Nil,oNF:_InfNfe:_Dest)
 Private oTotal      := oNF:_InfNfe:_Total
 Private oTransp     := oNF:_InfNfe:_Transp
 Private oDet        := oNF:_InfNfe:_Det
 Private oFatura     := IIf(Type("oNF:_InfNfe:_Cobr")=="U",Nil,oNF:_InfNfe:_Cobr)
 Private oImposto
+Private oEntrega	:= IIf(Type("oNF:_InfNfe:_Entrega") =="U",Nil,oNF:_InfNfe:_Entrega)
+Private oRetirada	:= IIf(Type("oNF:_InfNfe:_Retirada")=="U",Nil,oNF:_InfNfe:_Retirada)
 
 Private nPrivate    := 0
 Private nPrivate2   := 0
@@ -1083,10 +1109,97 @@ Private nXAux	    := 0
 Private lArt488MG   := .F.
 Private lArt274SP   := .F.  
 
-oBrush              := TBrush():New( , CLR_BLACK )
+Private nAjustaImp    := 0
+Private nAjustaRet    := 0
+Private nAjustaEnt    := 0
+Private nAjustaFat    := 0
+Private nAjustaVt     := 0
+Private nAjustaPro    := 0
+Private nAjustaDad    := 0
+Private nAjustaDest   := 0
+Private nAjustaISSQN  := 0
+Private nAjustaNat    := 0
 
-nFaturas := IIf(oFatura<>Nil,IIf(ValType(oNF:_InfNfe:_Cobr:_Dup)=="A",Len(oNF:_InfNfe:_Cobr:_Dup),1),0)
-oDet := IIf(ValType(oDet)=="O",{oDet},oDet)
+oBrush      := TBrush():New( , CLR_BLACK )
+
+nFaturas	:= IIf(oFatura<>Nil,IIf(ValType(oNF:_InfNfe:_Cobr:_Dup)=="A",Len(oNF:_InfNfe:_Cobr:_Dup),1),0)
+oDet 		:= IIf(ValType(oDet)=="O",{oDet},oDet)
+
+// Popula as variaveis
+if(valType(oEntrega)=="O" ) .And. ( valType(oRetirada)=="O") // Entrega e retirada
+	
+    nAjustaNat   := 4
+    nAjustaEnt   := 81
+	nAjustaRet   := 162
+	nAjustaFat   := 149
+	nAjustaImp   := 148
+    nAjustaVt    := 147
+	nAjustaISSQN := 20
+	nAjustaPro   := 0
+    nAjustaDad   := 20
+    nAjustaDest  := 10
+	nMaxItem     := 0
+
+ElseIF( valType(oEntrega)=="O" ) .And. ( valType(oRetirada)=="U") // Entrega
+
+	nAjustaNat   := 4
+    nAjustaEnt   := 81
+	nAjustaFat   := 68 
+    nAjustaImp   := 67
+    nAjustaVt    := 67
+    nAjustaISSQN := 13
+	nAjustaPro   := 67
+	nAjustaDad   := 13
+	nAjustaDest  := 10 
+	nMAXITEM     := 4
+
+ElseIF( valType(oEntrega)=="U" ) .And. ( valType(oRetirada)=="O") // Retirada
+
+	nAjustaNat   := 4
+	nAjustaRet   := 81
+	nAjustaFat   := 68 
+    nAjustaImp   := 67
+    nAjustaVt    := 67
+    nAjustaISSQN := 13
+	nAjustaPro   := 67
+	nAjustaDad   := 13
+	nAjustaDest  := 10 
+	nMAXITEM     := 4
+
+EndIf
+
+If ( valType(oRetirada)=="O" )
+	aRetirada := {IIF(Type("oRetirada:_xNome")=="U","",oRetirada:_xNome:Text),;   
+    IIF(Type("oRetirada:_CNPJ")=="U","",oRetirada:_CNPJ:Text),;
+    IIF(Type("oRetirada:_CPF")=="U","",oRetirada:_CPF:Text),;
+    IIF(Type("oRetirada:_xLgr")=="U","",oRetirada:_xLgr:Text),;
+    IIF(Type("oRetirada:_nro")=="U","",oRetirada:_nro:Text),;
+    IIF(Type("oRetirada:_xCpl")=="U","",oRetirada:_xCpl:Text),;
+    IIF(Type("oRetirada:_xBairro")=="U","",oRetirada:_xBairro:Text),;
+    IIF(Type("oRetirada:_xMun")=="U","",oRetirada:_xMun:Text),;
+    IIF(Type("oRetirada:_UF")=="U","",oRetirada:_UF:Text),;
+	IIF(Type("oRetirada:_IE")=="U","",oRetirada:_IE:Text),;
+	IIF(Type("oRetirada:_CEP")=="U","",oRetirada:_CEP:Text),;
+	IIF(Type("oRetirada:_FONE")=="U","",oRetirada:_Fone:Text),;
+	""}
+endIf
+
+If ( valType(oEntrega)=="O" )
+	aEntrega := {IIF(Type("oEntrega:_xNome")=="U","",oEntrega:_xNome:Text),;   
+    IIF(Type("oEntrega:_CNPJ")=="U","",oEntrega:_CNPJ:Text),;
+    IIF(Type("oEntrega:_CPF")=="U","",oEntrega:_CPF:Text),;
+    IIF(Type("oEntrega:_xLgr")=="U","",oEntrega:_xLgr:Text),;
+    IIF(Type("oEntrega:_nro")=="U","",oEntrega:_nro:Text),;
+    IIF(Type("oEntrega:_xCpl")=="U","",oEntrega:_xCpl:Text),;
+    IIF(Type("oEntrega:_xBairro")=="U","",oEntrega:_xBairro:Text),;
+    IIF(Type("oEntrega:_xMun")=="U","",oEntrega:_xMun:Text),;
+    IIF(Type("oEntrega:_UF")=="U","",oEntrega:_UF:Text),;
+	IIF(Type("oEntrega:_IE")=="U","",oEntrega:_IE:Text),;
+	IIF(Type("oEntrega:_CEP")=="U","",oEntrega:_CEP:Text),;
+	IIF(Type("oEntrega:_FONE")=="U","",oEntrega:_Fone:Text),;
+	""}
+endIf
+
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
 //≥Carrega as variaveis de impressao                                       ≥
 //¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
@@ -1112,16 +1225,12 @@ aadd(aSitSN,"900")
 //≥Quadro Destinatario                                                     ≥
 //¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
 
-cEndDest := NoChar(oDestino:_EnderDest:_Xlgr:Text,lConverte)
-If  " SN" $ (UPPER (oDestino:_EnderDest:_Xlgr:Text)) .Or. ",SN" $ (UPPER (oDestino:_EnderDest:_Xlgr:Text)) .Or. ;
-    "S/N" $ (UPPER (oDestino:_EnderDest:_Xlgr:Text)) 
-   
-            cEndDest += IIf(Type("oDestino:_EnderDest:_xcpl")=="U","",", " + NoChar(oDestino:_EnderDest:_xcpl:Text,lConverte))
-Else
-            cEndDest += +","+NoChar(oDestino:_EnderDest:_NRO:Text,lConverte) + IIf(Type("oDestino:_EnderDest:_xcpl")=="U","",", "+ NoChar(oDestino:_EnderDest:_xcpl:Text,lConverte))
-Endif   
+//Impressao DANFE A4 no PDV NFC-e
+if lNFCE .AND. (oDestino == Nil .or. type("oDestino:_EnderDest") == "U")
+	oDestino := MontaNfcDest(oDestino)
+endif
 
-aDest := {cEndDest,;
+aDest := {MontaEnd(oDestino:_EnderDest),;
 NoChar(oDestino:_EnderDest:_XBairro:Text,lConverte),;
 IIF(Type("oDestino:_EnderDest:_Cep")=="U","",Transform(oDestino:_EnderDest:_Cep:Text,"@r 99999-999")),;
 IIF(oNF:_INFNFE:_VERSAO:TEXT >= "3.10",IIF(Type("oIdent:_DHSaiEnt")=="U","",oIdent:_DHSaiEnt:Text),IIF(Type("oIdent:_DSaiEnt")=="U","",oIdent:_DSaiEnt:Text)),;
@@ -1163,7 +1272,7 @@ If ( MV_PAR04 == 1 )
 		ElseIf SF1->F1_TIPO == "D" .and. lEntIpiDev
 			aTotais[10] := 	Transform(Val(oTotal:_ICMSTOT:_vIPI:TEXT),"@e 9,999,999,999,999.99")
 		Else	
-			aTotais[10] := ""
+			aTotais[10] := "0,00"
 		EndIf        
 		MsUnlock()
 		DbSkip()
@@ -1198,10 +1307,10 @@ If lImpSimpN
 	    elseif Type("oDet["+Alltrim(Str(nS))+"]:_IMPOSTO:_ICMS:_ICMSSN900:_VCREDICMSSN:TEXT") <> "U"
 			nS:= 0	    
 	    	For nS := 1 To nDetImp 
-	    		If Type("oDet["+Alltrim(Str(nS))+"]:_IMPOSTO:_ICMS:_ICMSSN900:_VBC:TEXT") <> "U"
+	    		If ValAtrib("oDet["+Alltrim(Str(nS))+"]:_IMPOSTO:_ICMS:_ICMSSN900:_VBC:TEXT") <> "U"
 	 				nSnBaseIcm += Val(oDet[nS]:_IMPOSTO:_ICMS:_ICMSSN900:_VBC:TEXT)
 				EndIf			
-				If Type("oDet["+Alltrim(Str(nS))+"]:_IMPOSTO:_ICMS:_ICMSSN900:_VCREDICMSSN:TEXT") <> "U"
+				If ValAtrib("oDet["+Alltrim(Str(nS))+"]:_IMPOSTO:_ICMS:_ICMSSN900:_VCREDICMSSN:TEXT") <> "U"
 					nSnValIcm  += Val(oDet[nS]:_IMPOSTO:_ICMS:_ICMSSN900:_VCREDICMSSN:TEXT)
 				EndIf
 			Next nS
@@ -1281,15 +1390,53 @@ EndIf
 If Type("oTransp:_Vol")<>"U"
 	If ValType(oTransp:_Vol) == "A"
 		nX := nPrivate
+		cMarca := ""
+		aMarca := {}
+		cNumeracao := ""
+		aNumeracao := {}
 		nLenVol := Len(oTransp:_Vol)
 		For nX := 1 to nLenVol
 			nXAux := nX
-			nVolume += IIF(!Type("oTransp:_Vol[nXAux]:_QVOL:TEXT")=="U",Val(oTransp:_Vol[nXAux]:_QVOL:TEXT),0)
+			nVolume += IIF(!ValAtrib("oTransp:_Vol[nXAux]:_QVOL:TEXT")=="U",Val(oTransp:_Vol[nXAux]:_QVOL:TEXT),0)
+			if !ValAtrib("oTransp:_Vol[nXAux]:_MARCA:TEXT") == "U" .and. !empty(oTransp:_Vol[nXAux]:_MARCA:TEXT)
+				if aScan( aMarca, { |X| X == oTransp:_Vol[nXAux]:_MARCA:TEXT}) == 0 
+					aAdd( aMarca, oTransp:_Vol[nXAux]:_MARCA:TEXT )
+				endif
+			endif
+			if !ValAtrib("oTransp:_Vol[nXAux]:_nVOL:TEXT") == "U" .and. !empty(oTransp:_Vol[nXAux]:_nVOL:TEXT)
+				if aScan( aNumeracao, { |X| X == oTransp:_Vol[nXAux]:_nVOL:TEXT } ) == 0
+					aAdd( aNumeracao, oTransp:_Vol[nXAux]:_nVOL:TEXT )
+				endif
+			endif
 		Next nX
+
+		if len(aMarca) == 1
+			cMarca := aMarca[1]
+		elseif len(aMarca) > 1
+			cMarca := "Diversos"
+		endif
+		aSize(aMarca,0)
+		if len(aNumeracao) == 1
+			cNumeracao := aNumeracao[1]
+		elseif len(aNumeracao) > 1
+			cNumeracao := "Diversos"
+		endif
+		aSize(aNumeracao,0)
+
+		if Type("oTransp:_Vol:_Marca") == "U" 
+			cMarca := NoChar(cMarca,lConverte)
+		else
+			cMarca := NoChar(oTransp:_Vol:_Marca:TEXT,lConverte)
+		endif
+
+		if !Type("oTransp:_Vol:_nVol:TEXT") == "U"
+			cNumeracao := oTransp:_Vol:_nVol:TEXT
+		endif
+
 		aTransp[11]	:= AllTrim(str(nVolume))
 		aTransp[12]	:= IIf(Type("oTransp:_Vol:_Esp")=="U","Diversos","")
-		aTransp[13] := IIf(Type("oTransp:_Vol:_Marca")=="U","",NoChar(oTransp:_Vol:_Marca:TEXT,lConverte))
-		aTransp[14] := IIf(Type("oTransp:_Vol:_nVol:TEXT")<>"U",oTransp:_Vol:_nVol:TEXT,"")
+		aTransp[13] := cMarca
+		aTransp[14] := cNumeracao
 		If  Type("oTransp:_Vol[1]:_PesoB") <>"U"
 			nPesoB := Val(oTransp:_Vol[1]:_PesoB:TEXT)
 			aTransp[15] := AllTrim(str(nPesoB))
@@ -1306,6 +1453,8 @@ If Type("oTransp:_Vol")<>"U"
 		aTransp[15] := IIf(Type("oTransp:_Vol:_PesoB:TEXT")<>"U",oTransp:_Vol:_PesoB:TEXT,"")
 		aTransp[16] := IIf(Type("oTransp:_Vol:_PesoL:TEXT")<>"U",oTransp:_Vol:_PesoL:TEXT,"")
 	EndIf
+	aTransp[13] := SubStr( aTransp[13], 1, 20)
+	aTransp[14] := SubStr( aTransp[14], 1, 20)
 	aTransp[15] := strTRan(aTransp[15],".",",")
 	aTransp[16] := strTRan(aTransp[16],".",",")
 EndIf
@@ -1466,11 +1615,11 @@ For nZ := 1 To nLenDet
         nVUnit   := 0 
     Else
 	    nVTotal  := Val(oDet[nX]:_Prod:_vProd:TEXT)//-Val(IIF(Type("oDet[nPrivate]:_Prod:_vDesc")=="U","",oDet[nX]:_Prod:_vDesc:TEXT))
-	    nVUnit   := Val(oDet[nX]:_Prod:_vUnTrib:TEXT)
+	    nVUnit   := Val(oDet[nX]:_Prod:_vUnCom:TEXT)
 	EndIf
-	nQtd     := Val(oDet[nX]:_Prod:_qTrib:TEXT)
+	nQtd     := Val(oDet[nX]:_Prod:_qCom:TEXT)
 
-	If Type("oDet[nPrivate]:_Prod:_vDesc:TEXT")<>"U"
+	If ValAtrib("oDet[nPrivate]:_Prod:_vDesc:TEXT")<>"U"
 		nDesc := Val( oDet[nX]:_Prod:_vDesc:TEXT )
 	Else
 		nDesc := 0
@@ -1490,17 +1639,17 @@ For nZ := 1 To nLenDet
 	oImposto 	:= oDet[nX]                
 	cSitTrib 	:= ""
 	lPontilhado	:= .F.	
-	If Type("oImposto:_Imposto")<>"U"
-		If Type("oImposto:_Imposto:_ICMS")<>"U"
+	If ValAtrib("oImposto:_Imposto")<>"U"
+		If ValAtrib("oImposto:_Imposto:_ICMS")<>"U"
 			nLenSit := Len(aSitTrib)
 			For nY := 1 To nLenSit
 				nPrivate2 := nY
-				If Type("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2])<>"U" .OR. Type("oImposto:_Imposto:_ICMS:_ICMSST")<>"U" 
-					If Type("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_VBC:TEXT")<>"U"
+				If ValAtrib("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2])<>"U" .OR. ValAtrib("oImposto:_Imposto:_ICMS:_ICMSST")<>"U" 
+					If ValAtrib("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_VBC:TEXT")<>"U"
 						nBaseICM := Val(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_VBC:TEXT"))
 						nValICM  := Val(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_vICMS:TEXT"))
 						nPICM    := Val(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_PICMS:TEXT")) 
-					ElseIf Type("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_MOTDESICMS") <> "U" .And. Type("oImposto:_PROD:_VDESC:TEXT") <> "U"   //SINIEF 25/12, efeitos a partir de 20.12.12 
+					ElseIf ValAtrib("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_MOTDESICMS") <> "U" .And. ValAtrib("oImposto:_PROD:_VDESC:TEXT") <> "U"   //SINIEF 25/12, efeitos a partir de 20.12.12 
 						If oNF:_INFNFE:_VERSAO:TEXT >= "3.10" .and. &("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_CST:TEXT") <> "40"
 							If AllTrim(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_motDesICMS:TEXT")) == "7" .And. &("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_CST:TEXT") == "30"
 								nValICM  := 0
@@ -1515,14 +1664,14 @@ For nZ := 1 To nLenDet
 							EndIf
 						EndIf
 					EndIf
-					If Type("oImposto:_Imposto:_ICMS:_ICMSST")<>"U" // Tratamento para 4.0
+					If ValAtrib("oImposto:_Imposto:_ICMS:_ICMSST")<>"U" // Tratamento para 4.0
 						cSitTrib := &("oImposto:_Imposto:_ICMS:_ICMSST:_ORIG:TEXT") 
 						cSitTrib += &("oImposto:_Imposto:_ICMS:_ICMSST:_CST:TEXT")					
 					Else 
 						cSitTrib := &("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_ORIG:TEXT") 
 						cSitTrib += &("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_CST:TEXT")
 					EndIf
-					If Type("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_VBCST:TEXT")<>"U" .And. Type("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_vICMSST:TEXT")<>"U"
+					If ValAtrib("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_VBCST:TEXT")<>"U" .And. ValAtrib("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_vICMSST:TEXT")<>"U"
 						nBaseICMST := Val(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_VBCST:TEXT"))
 						nValICMST  := Val(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_vICMSST:TEXT"))
 					EndIf
@@ -1530,12 +1679,12 @@ For nZ := 1 To nLenDet
 			Next nY			
 		
 			//Tratamento para o ICMS para optantes pelo Simples Nacional
-			If Type("oEmitente:_CRT") <> "U" .And. oEmitente:_CRT:TEXT == "1"
+			If ValAtrib("oEmitente:_CRT") <> "U" .And. oEmitente:_CRT:TEXT == "1"
 				nLenSit := Len(aSitSN)
 				For nY := 1 To nLenSit
 					nPrivate2 := nY
-					If Type("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nPrivate2])<>"U"
-						If Type("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nPrivate2]+":_VBC:TEXT")<>"U"
+					If ValAtrib("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nPrivate2])<>"U"
+						If ValAtrib("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nPrivate2]+":_VBC:TEXT")<>"U"
 							nBaseICM := Val(&("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nY]+":_VBC:TEXT"))
 							nValICM  := Val(&("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nY]+":_vICMS:TEXT"))
 							nPICM    := Val(&("oImposto:_Imposto:_ICMS:_ICMSSN"+aSitSN[nY]+":_PICMS:TEXT"))                   
@@ -1546,17 +1695,17 @@ For nZ := 1 To nLenDet
 				Next nY	
 			EndIf
 		EndIf
-		If Type("oImposto:_Imposto:_IPI")<>"U"
-			If Type("oImposto:_Imposto:_IPI:_IPITrib:_vIPI:TEXT")<>"U"
+		If ValAtrib("oImposto:_Imposto:_IPI")<>"U"
+			If ValAtrib("oImposto:_Imposto:_IPI:_IPITrib:_vIPI:TEXT")<>"U"
 				nValIPI := Val(oImposto:_Imposto:_IPI:_IPITrib:_vIPI:TEXT)
 			EndIf
-			If Type("oImposto:_Imposto:_IPI:_IPITrib:_pIPI:TEXT")<>"U"
+			If ValAtrib("oImposto:_Imposto:_IPI:_IPITrib:_pIPI:TEXT")<>"U"
 				nPIPI   := Val(oImposto:_Imposto:_IPI:_IPITrib:_pIPI:TEXT)
 			EndIf
 		EndIf
 	EndIf
     
-	nMaxCod := MaxCod(oDet[nX]:_Prod:_cProd:TEXT, 40)
+	nMaxCod := MaxCod(oDet[nX]:_Prod:_cProd:TEXT, MAXCODPRD)
 	
 	// Tratamento para quebrar os digitos dos valores
 	aAux := {}
@@ -1575,10 +1724,10 @@ For nZ := 1 To nLenDet
 	aadd(aItens,{;
 		SubStr(oDet[nX]:_Prod:_cProd:TEXT,1,nMaxCod),;
 		SubStr(NoChar(oDet[nX]:_Prod:_xProd:TEXT,lConverte),1,nMaxDes),;
-		IIF(Type("oDet[nPrivate]:_Prod:_NCM")=="U","",oDet[nX]:_Prod:_NCM:TEXT),;
+		IIF(ValAtrib("oDet[nPrivate]:_Prod:_NCM")=="U","",oDet[nX]:_Prod:_NCM:TEXT),;
 		cSitTrib,;
 		oDet[nX]:_Prod:_CFOP:TEXT,;
-		oDet[nX]:_Prod:_utrib:TEXT,;
+		oDet[nX]:_Prod:_uCom:TEXT,;
 		SubStr(aAux[1], 1, PosQuebrVal(aAux[1])),;
 		SubStr(aAux[2], 1, PosQuebrVal(aAux[2])),;
 		SubStr(aAux[3], 1, PosQuebrVal(aAux[3])),;
@@ -1598,10 +1747,10 @@ For nZ := 1 To nLenDet
 		aadd(aItensAux,{;
 			SubStr(oDet[nX]:_Prod:_cProd:TEXT,1,nMaxCod),;
 			SubStr(NoChar(oDet[nX]:_Prod:_xProd:TEXT,lConverte),1,nMaxDes),;
-			IIF(Type("oDet[nPrivate]:_Prod:_NCM")=="U","",oDet[nX]:_Prod:_NCM:TEXT),;
+			IIF(ValAtrib("oDet[nPrivate]:_Prod:_NCM")=="U","",oDet[nX]:_Prod:_NCM:TEXT),;
 			cSitTrib,;
 			oDet[nX]:_Prod:_CFOP:TEXT,;
-			oDet[nX]:_Prod:_utrib:TEXT,;
+			oDet[nX]:_Prod:_uCom:TEXT,;
 			SubStr(aAux[1], 1, PosQuebrVal(aAux[1])),;
 			SubStr(aAux[2], 1, PosQuebrVal(aAux[2])),;
 			SubStr(aAux[3], 1, PosQuebrVal(aAux[3])),;
@@ -1619,43 +1768,11 @@ For nZ := 1 To nLenDet
 			nVTotal;
 		})
 	Endif
-	// Tramento quando houver diferenÁa entre as unidades uCom e uTrib ( SEFAZ MT )
-	If ( oDet[nX]:_Prod:_uTrib:TEXT <> oDet[nX]:_Prod:_uCom:TEXT )
 
-	    lPontilhado := IIf( nLenDet > 1, .T., lPontilhado )
-    	
-		cUnCom		:= oDet[nX]:_Prod:_uCom:TEXT
-		nQtdCom		:= Val(oDet[nX]:_Prod:_qCom:TEXT)
-	   	nVUnitCom	:= Val(oDet[nX]:_Prod:_vUnCom:TEXT)
-
-		aAuxCom := {}
-		AADD(aAuxCom, AllTrim(TransForm(nQtdCom,TM(nQtdCom,TamSX3("D2_QUANT")[1],TamSX3("D2_QUANT")[2]))))
-		AADD(aAuxCom, AllTrim(TransForm(nVUnitCom,TM(nVUnitCom,TamSX3("D2_PRCVEN")[1],TamSX3("D2_PRCVEN")[2]))))
-   	
-		aadd(aItens,{;
-			"",;
-			"",;
-			"",;
-			"",;
-			"",;
-			cUnCom,;
-			SubStr(aAuxCom[1], 1, PosQuebrVal(aAuxCom[1])),;
-			SubStr(aAuxCom[2], 1, PosQuebrVal(aAuxCom[2])),;
-			"",;
-			"",;
-			"",;
-			"",;
-			"",;
-			"",;
-			"",;
-			"",;
-			"",;									
-			"",;
-			"";
-		})
-
-	Endif
-	
+	/*------------------------------------------------------------
+		Tratativa para caso haja quebra de linha em algum quadro do item atual
+		 a impressao finalize na linha seguinte, antes de iniciar a impressao dos prÛx. itens.
+	------------------------------------------------------------*/
 	cAuxItem := AllTrim(SubStr(oDet[nX]:_Prod:_cProd:TEXT,nMaxCod+1))
 	cAux     := AllTrim(SubStr(NoChar(oDet[nX]:_Prod:_xProd:TEXT,lConverte),(nMaxDes + 1)))	
 	aAux[1]  := SubStr(aAux[1], PosQuebrVal(aAux[1]) + 1)
@@ -1673,7 +1790,7 @@ For nZ := 1 To nLenDet
 	While !Empty(cAux) .Or. !Empty(cAuxItem) .Or. !Empty(aAux[1]) .Or. !Empty(aAux[2]) .Or. !Empty(aAux[3]) .Or. !Empty(aAux[4]);
 	       .Or. !Empty(aAux[5]) .Or. !Empty(aAux[6]) .Or. !Empty(aAux[7]) .Or. !Empty(aAux[8]) .Or. !Empty(aAux[9]) .Or. !Empty(aAux[10]);
 	       .Or. !Empty(aAux[11])
-		nMaxCod := MaxCod(cAuxItem, 40)
+		nMaxCod := MaxCod(cAuxItem, MAXCODPRD)
 		
 		aadd(aItens,{;
 			SubStr(cAuxItem,1,nMaxCod),;
@@ -1739,15 +1856,133 @@ For nZ := 1 To nLenDet
 	    lPontilhado := .T.	
 	    
 	EndDo
-	
-	If (Type("oNf:_infnfe:_det[nPrivate]:_Infadprod:TEXT") <> "U" .Or. Type("oNf:_infnfe:_det:_Infadprod:TEXT") <> "U") .And. ( lImpAnfav  .Or. lImpInfAd )
+
+	// Tramento quando houver diferenÁa entre as unidades uCom e uTrib ( SEFAZ MT )
+	If ( oDet[nX]:_Prod:_uTrib:TEXT <> oDet[nX]:_Prod:_uCom:TEXT )
+
+	    lPontilhado := IIf( nLenDet > 1, .T., lPontilhado )
+    	
+		cUnTrib		:= oDet[nX]:_Prod:_uTrib:TEXT
+		nQtdTrib		:= Val(oDet[nX]:_Prod:_qTrib:TEXT)
+	   	nVUnitTrib	:= Val(oDet[nX]:_Prod:_vUnTrib:TEXT)
+
+		aAuxCom := {}
+		AADD(aAuxCom, AllTrim(TransForm(nQtdTrib,TM(nQtdTrib,TamSX3("D2_QUANT")[1],TamSX3("D2_QUANT")[2]))))
+		AADD(aAuxCom, AllTrim(TransForm(nVUnitTrib,TM(nVUnitTrib,TamSX3("D2_PRCVEN")[1],TamSX3("D2_PRCVEN")[2]))))
+   	
+		If lUf_MG
+			aadd(aItensAux,{;
+				"",;
+				"",;
+				"",;
+				"",;
+				oDet[nX]:_Prod:_CFOP:TEXT,;
+				cUnTrib,;
+				SubStr(aAuxCom[1], 1, PosQuebrVal(aAuxCom[1])),;
+				SubStr(aAuxCom[2], 1, PosQuebrVal(aAuxCom[2])),;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				StrZero( ++nSequencia, 4 ),;
+				0;
+			})			
+		Else
+			aadd(aItens,{;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				cUnTrib,;
+				SubStr(aAuxCom[1], 1, PosQuebrVal(aAuxCom[1])),;
+				SubStr(aAuxCom[2], 1, PosQuebrVal(aAuxCom[2])),;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;
+				"",;									
+				"",;
+				"";
+			})
+		EndIf
+		aAuxCom[1]  := SubStr(aAuxCom[1], PosQuebrVal(aAuxCom[1]) + 1) // Quantidade - D2_QUANT
+		aAuxCom[2]  := SubStr(aAuxCom[2], PosQuebrVal(aAuxCom[2]) + 1) // Valor Unitario - D2_PRCVEN
+
+		/*------------------------------------------------------------
+			Quebra de linha para os quadros "Quant." e "V.unit·rio" 
+				da 2a. unidade de medida
+		------------------------------------------------------------*/
+			While !Empty(aAuxCom[1]) .or. !Empty(aAuxCom[2])
+				If lUf_MG
+					aadd(aItensAux,{;
+						"",;
+						"",;
+						"",;
+						"",;
+						oDet[nX]:_Prod:_CFOP:TEXT,;
+						"",;
+						SubStr(aAuxCom[1], 1, PosQuebrVal(aAuxCom[1])),;
+						SubStr(aAuxCom[2], 1, PosQuebrVal(aAuxCom[2])),;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						"",;
+						StrZero( ++nSequencia, 4 ),;
+						0;
+					})
+				endif
+				aadd(aItens,{;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;
+					SubStr(aAuxCom[1], 1, PosQuebrVal(aAuxCom[1])),;
+					SubStr(aAuxCom[2], 1, PosQuebrVal(aAuxCom[2])),;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;
+					"",;									
+					"",;
+					"";
+				})
+				aAuxCom[1]  := SubStr(aAuxCom[1], PosQuebrVal(aAuxCom[1]) + 1) // Quantidade - D2_QUANT
+				aAuxCom[2]  := SubStr(aAuxCom[2], PosQuebrVal(aAuxCom[2]) + 1) // Valor Unitario - D2_PRCVEN	
+			EndDo
+	Endif
+
+	If (ValAtrib("oNf:_infnfe:_det[nPrivate]:_Infadprod:TEXT") <> "U" .Or. ValAtrib("oNf:_infnfe:_det:_Infadprod:TEXT") <> "U") .And. ( lImpAnfav  .Or. lImpInfAd )
 		If at("<", AllTrim(SubStr(oDet[nX]:_Infadprod:TEXT,1))) <> 0
 			cAux := stripTags(AllTrim(SubStr(oDet[nX]:_Infadprod:TEXT,1)), .T.) + " "
 			cAux += stripTags(AllTrim(SubStr(oDet[nX]:_Infadprod:TEXT,1)), .F.)
 		else
 			cAux := stripTags(AllTrim(SubStr(oDet[nX]:_Infadprod:TEXT,1)), .T.)
 		endIf
-
 		
 		While !Empty(cAux)
 			aadd(aItens,{;
@@ -1771,7 +2006,6 @@ For nZ := 1 To nLenDet
 				"",;
 				"";
 			})
-
 			If lUf_MG
 				aadd(aItensAux,{;
 					"",;
@@ -2215,16 +2449,16 @@ If Type("oNF:_INFNFE:_IDE:_NFREF")<>"U"
 	cAux1 := ""
 	cAux2 := ""
 	For Nx := 1 to Len(aInfNf)
-		If Type("aInfNf["+Str(nX)+"]:_REFNFE:TEXT")<>"U" .And. !AllTrim(aInfNf[nx]:_REFNFE:TEXT)$cAux1
+		If ValAtrib("aInfNf["+Str(nX)+"]:_REFNFE:TEXT")<>"U" .And. !AllTrim(aInfNf[nx]:_REFNFE:TEXT)$cAux1
 			If !"CHAVE"$Upper(cAux1)
 				If "65" $ substr (aInfNf[nx]:_REFNFE:TEXT,21,2)
 					cAux1 += "Chave de acesso da NFC-E referenciada: "
 				Else
-				cAux1 += "Chave de acesso da NF-E referenciada: "
+					cAux1 += "Chave de acesso da NF-E referenciada: "
 				Endif
 			EndIf
 			cAux1 += aInfNf[nx]:_REFNFE:TEXT+","
-		ElseIf Type("aInfNf["+Str(nX)+"]:_REFNF:_NNF:TEXT")<>"U" .And. !AllTrim(aInfNf[nx]:_REFNF:_NNF:TEXT)$cAux2 .And. lNFori2 
+		ElseIf ValAtrib("aInfNf["+Str(nX)+"]:_REFNF:_NNF:TEXT")<>"U" .And. !AllTrim(aInfNf[nx]:_REFNF:_NNF:TEXT)$cAux2 .And. lNFori2 
 			If !"ORIGINAL"$Upper(cAux2)
 				cAux2 += " Numero da nota original: "
 			EndIf
@@ -2261,13 +2495,13 @@ If GetNewPar("MV_BCREFIS",.F.) .And. SuperGetMv("MV_ESTADO")$"PR"
    		nLenDet := Len(oDet)
    		For nX := 1 To nLenDet
 	   		oImposto := oDet[nX]
-	   		If Type("oImposto:_Imposto")<>"U"
-		 		If Type("oImposto:_Imposto:_ICMS")<>"U"
+	   		If ValAtrib("oImposto:_Imposto")<>"U"
+		 		If ValAtrib("oImposto:_Imposto:_ICMS")<>"U"
 		 			nLenSit := Len(aSitTrib)
 		 			For nY := 1 To nLenSit
 		 				nPrivate2 := nY
-		 				If Type("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2])<>"U"
-		 					If Type("oImposto:_IMPOSTO:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_VBCST:TEXT")<>"U"
+		 				If ValAtrib("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nPrivate2])<>"U"
+		 					If ValAtrib("oImposto:_IMPOSTO:_ICMS:_ICMS"+aSitTrib[nPrivate2]+":_VBCST:TEXT")<>"U"
 		 		   				nBaseIcm := Val(&("oImposto:_Imposto:_ICMS:_ICMS"+aSitTrib[nY]+":_VBCST:TEXT"))
 		 						cAux +=  oDet[nX]:_PROD:_CPROD:TEXT + ": BCICMS-ST R$" + AllTrim(TransForm(nBaseICM,TM(nBaseICM,TamSX3("D2_BASEICM")[1],TamSX3("D2_BASEICM")[2]))) + " / "	
    		 	  				Endif
@@ -2282,6 +2516,11 @@ If GetNewPar("MV_BCREFIS",.F.) .And. SuperGetMv("MV_ESTADO")$"PR"
   		cAux := SubStr(cAux,IIf(EspacoAt(cAux, MAXMENL) > 1, 63, MAXMENL) +2)
    	EndDo	
 Endif  
+
+If !Empty(cMsgRet)
+	aMsgRet := StrTokArr( cMsgRet, "|")
+	aEval( aMsgRet, {|x| aadd( aResFisco, alltrim(x) ) } )
+endif
         
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
 //≥Calculo do numero de folhas                                             ≥
@@ -2290,20 +2529,30 @@ nFolhas	  := 1
 nLenItens := Len(aItens) - MAXITEM // Todos os produtos/serviÁos excluindo a primeira p·gina
 nMsgCompl := Len(aMensagem) - MAXMSG // Todas as mensagens complementares excluindo a primeira p·gina
 lFlag     := .T.
+
 While lFlag
 	// Caso existam produtos/serviÁos e mensagens complementares a serem escritas
 	If nLenItens > 0 .And. nMsgCompl > 0
 		nFolhas++
-		nLenItens -= MAXITEMP4
-		nMsgCompl := 0
+		If MV_PAR05 == 1 .And. (nFolhas % 2) == 0
+			nLenItens -= MAXITEMP3
+		Else // Frente e Verso Impress„o atÈ 50% da p·gina
+			nLenItens -= MAXITEMP2
+			nMsgCompl -= MAXMSG2
+		Endif
 	// Caso existam apenas mensagens complementares a serem escritas
 	ElseIf nLenItens <= 0 .And. nMsgCompl > 0
 		nFolhas++
-		nMsgCompl := 0
+		nMsgCompl -= MAXMSG2
 	// Caso existam apenas produtos/serviÁos a serem escritos
 	ElseIf nLenItens > 0 .And. nMsgCompl <= 0
 		nFolhas++
-		nLenItens -= MAXITEMP2
+		// Se estiver habilitado frente e verso e for uma p·gina impar
+		If MV_PAR05 == 1 .And. (nFolhas % 2) == 0
+			nLenItens -= MAXITEMP3
+		Else
+			nLenItens -= MAXITEMP2F
+		EndIf
 	// Se n„o tiver mais nada a ser escrito fecha a contagem
 	Else
 		lFlag := .F.
@@ -2358,12 +2607,6 @@ aadd(aUF,{"EX","99"})
 //≥Inicializacao da pagina do objeto grafico                               ≥
 //¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
 oDanfe:StartPage()
-nHPage := oDanfe:nHorzRes()
-nHPage *= (300/PixelX)
-nHPage -= HMARGEM
-nVPage := oDanfe:nVertRes()
-nVPage *= (300/PixelY)
-nVPage -= VBOX
 nLine  := -42  
 nBaseTxt := 180
 nBaseCol := 70
@@ -2386,58 +2629,148 @@ Do Case
 EndCase
 
 nLine -= 8
-//oDanfe:Box(nLine+197,nBaseCol,nLine+270,nBaseCol+30)
-oDanfe:FillRect({nLine+198,nBaseCol,nLine+269,nBaseCol+30},oBrush)
-oDanfe:Say(nLine+265,nBaseTxt+1,"DESTINATARIO /",oFont08N:oFont, , CLR_WHITE, 270 )
-oDanfe:Say(nLine+260,nBaseTxt+11,"REMETENTE"     ,oFont08N:oFont, ,CLR_WHITE , 270 )
+oDanfe:FillRect({nLine+197 - nAjustaDest,nBaseCol,nLine+269-nAjustaDest,nBaseCol+30},oBrush)
+oDanfe:Say(nLine+265 - nAjustaDest,nBaseTxt+1,"DESTINATARIO/",oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:Say(nLine+260 - nAjustaDest,nBaseTxt+11,"REMETENTE"     ,oFont08N:oFont, ,CLR_WHITE , 270 )
 
 nBaseTxt += 30 
-//oDanfe:Say(nLine+195,nBaseTxt,"DESTINATARIO/REMETENTE",oFont08N:oFont)
-oDanfe:Box(nLine+197,nBaseCol+30,nLine+222,542)
-oDanfe:Say(nLine+205,nBaseTxt, "NOME/RAZ√O SOCIAL",oFont08N:oFont)
-oDanfe:Say(nLine+215,nBaseTxt,NoChar(oDestino:_XNome:TEXT,lConverte),oFont08:oFont)
-oDanfe:Box(nLine+197,542,nLine+222,MAXBOXH-40)
-oDanfe:Box(nLine+197.5,542.5,nLine+220.5,MAXBOXH-41.5)//BOX NEGRITO
-oDanfe:Say(nLine+205,552,"CNPJ/CPF",oFont08N:oFont)
-oDanfe:Say(nLine+215,552,cAux,oFont08:oFont)
+oDanfe:Box(nLine+197 - nAjustaDest,nBaseCol+30,nLine+222,542)
+oDanfe:Say(nLine+205 - nAjustaDest,nBaseTxt, "NOME/RAZ√O SOCIAL",oFont08N:oFont)
+oDanfe:Say(nLine+215 - nAjustaDest,nBaseTxt,NoChar(oDestino:_XNome:TEXT,lConverte),oFont08:oFont)
+oDanfe:Box(nLine+197 - nAjustaDest,542,nLine+222 - nAjustaDest,MAXBOXH-40)
+oDanfe:Say(nLine+205 - nAjustaDest,552,"CNPJ/CPF",oFont08N:oFont)
+oDanfe:Say(nLine+215 - nAjustaDest,552,cAux,oFont08:oFont)
 
-oDanfe:Box(nLine+222,nBaseCol+30,nLine+247,402)
-oDanfe:Say(nLine+230,nBaseTxt,"ENDERE«O",oFont08N:oFont)
-oDanfe:Say(nLine+240,nBaseTxt,aDest[01],oFont08:oFont)
-oDanfe:Box(nLine+222,402,nLine+247,602)
-oDanfe:Say(nLine+230,412,"BAIRRO/DISTRITO",oFont08N:oFont)
-oDanfe:Say(nLine+240,412,aDest[02],oFont08:oFont)
-oDanfe:Box(nLine+222,602,nLine+247,MAXBOXH-40)
-oDanfe:Say(nLine+230,612,"CEP",oFont08N:oFont)
-oDanfe:Say(nLine+240,612,aDest[03],oFont08:oFont)
+oDanfe:Box(nLine+222 - nAjustaDest,nBaseCol+30,nLine+247 - nAjustaDest,402)
+oDanfe:Say(nLine+230 - nAjustaDest,nBaseTxt,"ENDERE«O",oFont08N:oFont)
+oDanfe:Say(nLine+240 - nAjustaDest,nBaseTxt,aDest[01],oFont08:oFont)
+oDanfe:Box(nLine+222 - nAjustaDest,402,nLine+247- nAjustaDest,602)
+oDanfe:Say(nLine+230 - nAjustaDest,412,"BAIRRO/DISTRITO",oFont08N:oFont)
+oDanfe:Say(nLine+240 - nAjustaDest,412,aDest[02],oFont08:oFont)
+oDanfe:Box(nLine+222 - nAjustaDest,602,nLine+247,MAXBOXH-40)
+oDanfe:Say(nLine+230 - nAjustaDest,612,"CEP",oFont08N:oFont)
+oDanfe:Say(nLine+240 - nAjustaDest,612,aDest[03],oFont08:oFont)
 
-oDanfe:Box(nLine+247,nBaseCol+30,nLine+270,302)
-oDanfe:Say(nLine+255,nBaseTxt,"MUNICIPIO",oFont08N:oFont)
-oDanfe:Say(nLine+265,nBaseTxt,aDest[05],oFont08:oFont)
-oDanfe:Box(nLine+247,302,nLine+270,502)
-oDanfe:Say(nLine+255,312,"FONE/FAX",oFont08N:oFont)
-oDanfe:Say(nLine+265,312,aDest[06],oFont08:oFont)
-oDanfe:Box(nLine+247,502,nLine+270,542)
-oDanfe:Say(nLine+255,512,"UF",oFont08N:oFont)
-oDanfe:Say(nLine+265,512,aDest[07],oFont08:oFont)
-oDanfe:Box(nLine+247,542,nLine+270,MAXBOXH-40)
-oDanfe:Box(nLine+247.5,542.5,nLine+268.5,MAXBOXH-41.5)//BOX NEGRITO
-oDanfe:Say(nLine+255,552,"INSCRI«√O ESTADUAL",oFont08N:oFont)
-oDanfe:Say(nLine+265,552,aDest[08],oFont08:oFont)
+oDanfe:Box(nLine+247 - nAjustaDest,nBaseCol+30,nLine+270 - nAjustaDest,302)
+oDanfe:Say(nLine+255 - nAjustaDest,nBaseTxt,"MUNICIPIO",oFont08N:oFont)
+oDanfe:Say(nLine+265 - nAjustaDest,nBaseTxt,aDest[05],oFont08:oFont)
+oDanfe:Box(nLine+247 - nAjustaDest,302,nLine+270 - nAjustaDest,502)
+oDanfe:Say(nLine+255 - nAjustaDest,312,"FONE/FAX",oFont08N:oFont)
+oDanfe:Say(nLine+265 - nAjustaDest,312,aDest[06],oFont08:oFont)
+oDanfe:Box(nLine+247 - nAjustaDest,502,nLine+270 - nAjustaDest,542)
+oDanfe:Say(nLine+255 - nAjustaDest,512,"UF",oFont08N:oFont)
+oDanfe:Say(nLine+265 - nAjustaDest,512,aDest[07],oFont08:oFont)
+oDanfe:Box(nLine+247 - nAjustaDest,542,nLine+270 - nAjustaDest,MAXBOXH-40)
+oDanfe:Say(nLine+255 - nAjustaDest,552,"INSCRI«√O ESTADUAL",oFont08N:oFont)
+oDanfe:Say(nLine+265 - nAjustaDest,552,aDest[08],oFont08:oFont)
 
 //nBaseTxt := 790 
 
-oDanfe:Box(nLine+197,MAXBOXH-40,nLine+222,MAXBOXH+70)
-oDanfe:Say(nLine+205,MAXBOXH-30,"DATA DE EMISS√O",oFont08N:oFont)
-oDanfe:Say(nLine+215,MAXBOXH-30,Iif(oNF:_INFNFE:_VERSAO:TEXT >= "3.10",ConvDate(oIdent:_DHEmi:TEXT),ConvDate(oIdent:_DEmi:TEXT)),oFont08:oFont)
-oDanfe:Box(nLine+222,MAXBOXH-40,nLine+247,MAXBOXH+70)
-oDanfe:Say(nLine+230,MAXBOXH-30,"DATA ENTRADA/SAÕDA",oFont08N:oFont)
-oDanfe:Say(nLine+240,MAXBOXH-30,Iif( Empty(aDest[4]),"",ConvDate(aDest[4]) ),oFont08:oFont)
-oDanfe:Box(nLine+247,MAXBOXH-40,nLine+272,MAXBOXH+70)
-oDanfe:Say(nLine+255,MAXBOXH-30,"HORA ENTRADA/SAÕDA",oFont08N:oFont)
-oDanfe:Say(nLine+265,MAXBOXH-30,aHrEnt[01],oFont08:oFont)
+oDanfe:Box(nLine+197 - nAjustaDest,MAXBOXH-40,nLine+222 - nAjustaDest,MAXBOXH+70)
+oDanfe:Say(nLine+205 - nAjustaDest,MAXBOXH-30,"DATA DE EMISS√O",oFont08N:oFont)
+oDanfe:Say(nLine+215 - nAjustaDest,MAXBOXH-30,Iif(oNF:_INFNFE:_VERSAO:TEXT >= "3.10",ConvDate(oIdent:_DHEmi:TEXT),ConvDate(oIdent:_DEmi:TEXT)),oFont08:oFont)
+oDanfe:Box(nLine+222 - nAjustaDest,MAXBOXH-40,nLine+247 - nAjustaDest,MAXBOXH+70)
+oDanfe:Say(nLine+230 - nAjustaDest,MAXBOXH-30,"DATA ENTRADA/SAÕDA",oFont08N:oFont)
+oDanfe:Say(nLine+240 - nAjustaDest,MAXBOXH-30,Iif( Empty(aDest[4]),"",ConvDate(aDest[4]) ),oFont08:oFont)
+oDanfe:Box(nLine+247 - nAjustaDest,MAXBOXH-40,nLine+272 - nAjustaDest,MAXBOXH+70)
+oDanfe:Say(nLine+255 - nAjustaDest,MAXBOXH-30,"HORA ENTRADA/SAÕDA",oFont08N:oFont)
+oDanfe:Say(nLine+265 - nAjustaDest,MAXBOXH-30,aHrEnt[01],oFont08:oFont)
 
+//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
+//≥Quadro InformaÁıes do local de entrega                                    ≥
+//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
+If valType(oEntrega)=="O"
+	Do Case
+		Case Type("oEntrega:_CNPJ")=="O"
+			cAux := TransForm(oEntrega:_CNPJ:TEXT,"@r 99.999.999/9999-99")
+		Case Type("oEntrega:_CPF")=="O"
+			cAux := TransForm(oEntrega:_CPF:TEXT,"@r 999.999.999-99")
+		OtherWise
+			cAux := Space(14)
+	EndCase
 
+	nLine -= 8
+
+	oDanfe:FillRect({nLine+188+nAjustaEnt,nBaseCol,nLine+258+nAjustaEnt,nBaseCol+30},oBrush)
+	oDanfe:Say(nLine+230+nAjustaEnt,nBaseTxt - 27," LOCAL" ,oFont08N:oFont, , CLR_WHITE, 270)
+	oDanfe:Say(nLine+230+nAjustaEnt,nBaseTxt - 21,"ENTREGA",oFont08N:oFont, ,CLR_WHITE , 270 )
+
+	oDanfe:Box(nLine+187+nAjustaEnt,nBaseCol+30,nLine+222+nAjustaEnt,542)
+	oDanfe:Say(nLine+195+nAjustaEnt,nBaseTxt, "NOME/RAZ√O SOCIAL",oFont08N:oFont)
+	oDanfe:Say(nLine+205+nAjustaEnt,nBaseTxt,NoChar(aEntrega[1],lConverte),oFont08:oFont)
+	oDanfe:Box(nLine+187+nAjustaEnt,542,nLine+212+nAjustaEnt,MAXBOXH-40)
+	oDanfe:Say(nLine+195+nAjustaEnt,552,"CNPJ/CPF",oFont08N:oFont)
+	oDanfe:Say(nLine+210+nAjustaEnt,552,cAux,oFont08:oFont)
+	oDanfe:Box(nLine+212+nAjustaEnt,nBaseCol+30,nLine+237+nAjustaEnt,502)
+	oDanfe:Say(nLine+220+nAjustaEnt,nBaseTxt,"ENDERE«O",oFont08N:oFont)
+	oDanfe:Say(nLine+230+nAjustaEnt,nBaseTxt,MontaEnd(oEntrega),oFont08:oFont)
+	oDanfe:Box(nLine+212+nAjustaEnt,402,nLine+237+nAjustaEnt,802)
+	oDanfe:Say(nLine+220+nAjustaEnt,412,"BAIRRO/DISTRITO",oFont08N:oFont)
+	oDanfe:Say(nLine+230+nAjustaEnt,412,aEntrega[7],oFont08:oFont)
+	oDanfe:Box(nLine+237+nAjustaEnt,nBaseCol+30,nLine+260+nAjustaEnt,730)
+	oDanfe:Say(nLine+245+nAjustaEnt,nBaseTxt,"MUNICIPIO",oFont08N:oFont)
+	oDanfe:Say(nLine+255+nAjustaEnt,nBaseTxt,aEntrega[8],oFont08:oFont)
+	oDanfe:Box(nLine+237+nAjustaEnt,725,nLine+260+nAjustaEnt,MAXBOXH-40)
+	oDanfe:Say(nLine+245+nAjustaEnt,735,"UF",oFont08N:oFont)
+	oDanfe:Say(nLine+255+nAjustaEnt,735,aEntrega[9],oFont08:oFont)
+	oDanfe:Box(nLine+187+nAjustaEnt,MAXBOXH-40,nLine+212+nAjustaEnt,MAXBOXH+70)
+	oDanfe:Say(nLine+195+nAjustaEnt,MAXBOXH-30,"INSCRI«√O ESTADUAL",oFont08N:oFont)
+	oDanfe:Say(nLine+205+nAjustaEnt,MAXBOXH-30,aEntrega[10],oFont08:oFont)
+	oDanfe:Box(nLine+212+nAjustaEnt,MAXBOXH-40,nLine+237+nAjustaEnt,MAXBOXH+70)
+	oDanfe:Say(nLine+220+nAjustaEnt,MAXBOXH-30,"CEP",oFont08N:oFont)
+	oDanfe:Say(nLine+230+nAjustaEnt,MAXBOXH-30,aEntrega[11],oFont08:oFont)
+	oDanfe:Box(nLine+237+nAjustaEnt,MAXBOXH-40,nLine+260+nAjustaEnt,MAXBOXH+70)
+	oDanfe:Say(nLine+245+nAjustaEnt,MAXBOXH-30,"FONE/FAX entrega",oFont08N:oFont)
+	oDanfe:Say(nLine+255+nAjustaEnt,MAXBOXH-30,aEntrega[12],oFont08:oFont)
+EndIf
+
+//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
+//≥Quadro InformaÁıes do local de retirada                                      ≥
+//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
+If valType(oRetirada)=="O"
+	Do Case
+		Case Type("oRetirada:_CNPJ")=="O"
+			cAux := TransForm(oRetirada:_CNPJ:TEXT,"@r 99.999.999/9999-99")
+		Case Type("oRetirada:_CPF")=="O"
+			cAux := TransForm(oRetirada:_CPF:TEXT,"@r 999.999.999-99")
+		OtherWise
+			cAux := Space(14)
+	EndCase
+
+	nLine -= 8
+
+	oDanfe:FillRect({nLine+188+nAjustaRet,nBaseCol,nLine+258+nAjustaRet,nBaseCol+30},oBrush)
+	oDanfe:Say(nLine+237+nAjustaRet,nBaseTxt - 27," LOCAL",oFont08N:oFont, , CLR_WHITE, 270)
+	oDanfe:Say(nLine+237+nAjustaRet,nBaseTxt - 21,"RETIRADA"     ,oFont08N:oFont, ,CLR_WHITE , 270 )
+
+	oDanfe:Box(nLine+187+nAjustaRet,nBaseCol+30,nLine+222+nAjustaRet,542)
+	oDanfe:Say(nLine+195+nAjustaRet,nBaseTxt, "NOME/RAZ√O SOCIAL",oFont08N:oFont)
+ 	oDanfe:Say(nLine+205+nAjustaRet,nBaseTxt,NoChar(aRetirada[1],lConverte),oFont08:oFont)
+	oDanfe:Box(nLine+187+nAjustaRet,542,nLine+212+nAjustaRet,MAXBOXH-40)
+	oDanfe:Say(nLine+195+nAjustaRet,552,"CNPJ/CPF",oFont08N:oFont)
+	oDanfe:Say(nLine+210+nAjustaRet,552,cAux,oFont08:oFont)
+	oDanfe:Box(nLine+212+nAjustaRet,nBaseCol+30,nLine+237+nAjustaRet,502)
+	oDanfe:Say(nLine+220+nAjustaRet,nBaseTxt,"ENDERE«O",oFont08N:oFont)
+	oDanfe:Say(nLine+230+nAjustaRet,nBaseTxt,MontaEnd(oRetirada),oFont08:oFont)
+	oDanfe:Box(nLine+212+nAjustaRet,402,nLine+237+nAjustaRet,802)
+	oDanfe:Say(nLine+220+nAjustaRet,412,"BAIRRO/DISTRITO",oFont08N:oFont)
+	oDanfe:Say(nLine+230+nAjustaRet,412,aRetirada[7],oFont08:oFont)
+	oDanfe:Box(nLine+237+nAjustaRet,nBaseCol+30,nLine+260+nAjustaRet,730)
+	oDanfe:Say(nLine+245+nAjustaRet,nBaseTxt,"MUNICIPIO",oFont08N:oFont)
+	oDanfe:Say(nLine+255+nAjustaRet,nBaseTxt,aRetirada[8],oFont08:oFont)
+	oDanfe:Box(nLine+237+nAjustaRet,725,nLine+260+nAjustaRet,MAXBOXH-40)
+	oDanfe:Say(nLine+245+nAjustaRet,735,"UF",oFont08N:oFont)
+	oDanfe:Say(nLine+255+nAjustaRet,735,aRetirada[09],oFont08:oFont)
+	oDanfe:Box(nLine+187+nAjustaRet,MAXBOXH-40,nLine+212+nAjustaRet,MAXBOXH+70)
+	oDanfe:Say(nLine+195+nAjustaRet,MAXBOXH-30,"INSCRI«√O ESTADUAL",oFont08N:oFont)
+	oDanfe:Say(nLine+205+nAjustaRet,MAXBOXH-30,aRetirada[10],oFont08:oFont)
+	oDanfe:Box(nLine+212+nAjustaRet,MAXBOXH-40,nLine+237+nAjustaRet,MAXBOXH+70)
+	oDanfe:Say(nLine+220+nAjustaRet,MAXBOXH-30,"CEP",oFont08N:oFont)
+	oDanfe:Say(nLine+230+nAjustaRet,MAXBOXH-30,aRetirada[11],oFont08:oFont)
+	oDanfe:Box(nLine+237+nAjustaRet,MAXBOXH-40,nLine+260+nAjustaRet,MAXBOXH+70)
+	oDanfe:Say(nLine+245+nAjustaRet,MAXBOXH-30,"FONE/FAX retirada",oFont08N:oFont)
+	oDanfe:Say(nLine+255+nAjustaRet,MAXBOXH-30,aRetirada[12],oFont08:oFont)
+EndIf
 
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
 //≥Quadro fatura                                                           ≥
@@ -2475,28 +2808,28 @@ Next nX
 nLine -= 5
 nBaseTxt -= 30 
 //oDanfe:Box(nLine+275,nBaseCol,nLine+310,nBaseCol+30)
-oDanfe:FillRect({nLine+276,nBaseCol,nLine+309,nBaseCol+30},oBrush)
+oDanfe:FillRect({nLine+277+nAjustaFat,nBaseCol,nLine+308+nAjustaFat,nBaseCol+30},oBrush)
 
-oDanfe:Say(nLine+305,nBaseTxt+7,"FATURA",oFont08N:oFont, ,CLR_WHITE , 270 )
+oDanfe:Say(nLine+305+nAjustaFat,nBaseTxt+7,"FATURA",oFont08N:oFont, ,CLR_WHITE , 270 ) 
 nBaseTxt += 30 
 
 nPos1Col := 0
 nPos2Col := 0
 For Nx := 1 to 8
-	oDanfe:Box(nLine+275,nBaseCol+30+nPos1Col,nLine+310,nBaseCol+115.1+nPos2Col)
+	oDanfe:Box(nLine+277+nAjustaFat,nBaseCol+30+nPos1Col,nLine+310+nAjustaFat,nBaseCol+115.1+nPos2Col)
 	nPos1Col += 84.1
 	nPos2Col += 84.1
 Next
 //Ultimo Box
-oDanfe:Box(nLine+275,nBaseCol+30+nPos1Col,nLine+310,MAXBOXH+70)
+oDanfe:Box(nLine+277+nAjustaFat,nBaseCol+30+nPos1Col,nLine+310+nAjustaFat,MAXBOXH+70)
 
 
 nColuna := nBaseCol+36
-If Len(aFaturas) >0
+If Len(aFaturas) > 0
 	For nY := 1 To 9
-		oDanfe:Say(nLine+287,nColuna,aAux[1][ny][1],oFont08:oFont)
-		oDanfe:Say(nLine+296,nColuna,aAux[1][ny][2],oFont08:oFont)
-		oDanfe:Say(nLine+305,nColuna,aAux[1][ny][3],oFont08:oFont)
+		oDanfe:Say(nLine+287+nAjustaFat,nColuna,aAux[1][ny][1],oFont08:oFont)
+		oDanfe:Say(nLine+296+nAjustaFat,nColuna,aAux[1][ny][2],oFont08:oFont)
+		oDanfe:Say(nLine+305+nAjustaFat,nColuna,aAux[1][ny][3],oFont08:oFont)
 		nColuna:= nColuna+84.1
 	Next nY
 Endif
@@ -2508,134 +2841,136 @@ nLine -= 18
 //¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
 nBaseTxt -= 30 
 //oDanfe:Box(nLine+328,nBaseCol,nLine+376,nBaseCol+30)
-oDanfe:FillRect({nLine+329,nBaseCol,nLine+375,nBaseCol+30},oBrush)
-oDanfe:Say(nLine+372,nBaseTxt,"CALCULO",oFont08N:oFont, ,CLR_WHITE , 270 )
-oDanfe:Say(nLine+360,nBaseTxt+7,"DO",oFont08N:oFont, , CLR_WHITE, 270 )
-oDanfe:Say(nLine+370,nBaseTxt+14,"IMPOSTO",oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:FillRect({nLine+329+nAjustaImp,nBaseCol,nLine+375+nAjustaImp,nBaseCol+30},oBrush)
+oDanfe:Say(nLine+372+nAjustaImp,nBaseTxt,"CALCULO",oFont08N:oFont, ,CLR_WHITE , 270 )
+oDanfe:Say(nLine+360+nAjustaImp,nBaseTxt+7,"DO",oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:Say(nLine+370+nAjustaImp,nBaseTxt+14,"IMPOSTO",oFont08N:oFont, , CLR_WHITE, 270 )
 nBaseTxt += 30 
 
-oDanfe:Box(nLine+328,nBaseCol+30,nLine+353,262)
-oDanfe:Say(nLine+336,nBaseTxt,"BASE DE CALCULO DO ICMS",oFont08N:oFont)
+oDanfe:Box(nLine+328+nAjustaImp,nBaseCol+30,nLine+353+nAjustaImp,262)
+oDanfe:Say(nLine+336+nAjustaImp,nBaseTxt,"BASE DE CALCULO DO ICMS",oFont08N:oFont)
 If cMVCODREG $ "2|3" 
-	oDanfe:Say(nLine+346,nBaseTxt,aTotais[01],oFont08:oFont)
+	oDanfe:Say(nLine+346+nAjustaImp,nBaseTxt,aTotais[01],oFont08:oFont)
 ElseIf lImpSimpN
-	oDanfe:Say(nLine+346,nBaseTxt,aSimpNac[01],oFont08:oFont)	
+	oDanfe:Say(nLine+346+nAjustaImp,nBaseTxt,aSimpNac[01],oFont08:oFont)	
 Endif
-oDanfe:Box(nLine+328,262,nLine+353,402)
-oDanfe:Say(nLine+336,272,"VALOR DO ICMS",oFont08N:oFont)
+oDanfe:Box(nLine+328+nAjustaImp,262,nLine+353+nAjustaImp,402)
+oDanfe:Say(nLine+336+nAjustaImp,272,"VALOR DO ICMS",oFont08N:oFont)
 If cMVCODREG $ "2|3" 
-	oDanfe:Say(nLine+346,272,aTotais[02],oFont08:oFont)
+	oDanfe:Say(nLine+346+nAjustaImp,272,aTotais[02],oFont08:oFont)
 ElseIf lImpSimpN
-	oDanfe:Say(nLine+346,272,aSimpNac[02],oFont08:oFont)
+	oDanfe:Say(nLine+346+nAjustaImp,272,aSimpNac[02],oFont08:oFont)
 Endif
-oDanfe:Box(nLine+328,402,nLine+353,557)
-oDanfe:Say(nLine+336,412,"BASE DE CALCULO DO ICMS ST",oFont08N:oFont)
-oDanfe:Say(nLine+346,412,aTotais[03],oFont08:oFont)
-oDanfe:Box(nLine+328,557,nLine+353,697)
-oDanfe:Say(nLine+336,567,"VALOR DO ICMS SUBSTITUI«√O",oFont08N:oFont)
-oDanfe:Say(nLine+346,567,aTotais[04],oFont08:oFont)
-oDanfe:Box(nLine+328,697,nLine+353,MAXBOXH+70)
-oDanfe:Say(nLine+336,707,"VALOR TOTAL DOS PRODUTOS",oFont08N:oFont)
-oDanfe:Say(nLine+346,707,aTotais[05],oFont08:oFont)
+oDanfe:Box(nLine+328+nAjustaImp,402,nLine+353+nAjustaImp,557)
+oDanfe:Say(nLine+336+nAjustaImp,412,"BASE DE CALCULO DO ICMS ST",oFont08N:oFont)
+oDanfe:Say(nLine+346+nAjustaImp,412,aTotais[03],oFont08:oFont)
+oDanfe:Box(nLine+328+nAjustaImp,557,nLine+353+nAjustaImp,697)
+oDanfe:Say(nLine+336+nAjustaImp,567,"VALOR DO ICMS SUBSTITUI«√O",oFont08N:oFont)
+oDanfe:Say(nLine+346+nAjustaImp,567,aTotais[04],oFont08:oFont)
+oDanfe:Box(nLine+328+nAjustaImp,697,nLine+353+nAjustaImp,MAXBOXH+70)
+oDanfe:Say(nLine+336+nAjustaImp,707,"VALOR TOTAL DOS PRODUTOS",oFont08N:oFont)
+oDanfe:Say(nLine+346+nAjustaImp,707,aTotais[05],oFont08:oFont)
 
 
-oDanfe:Box(nLine+353,nBaseCol+30,nLine+378,232)
-oDanfe:Say(nLine+361,nBaseTxt,"VALOR DO FRETE",oFont08N:oFont)
-oDanfe:Say(nLine+371,nBaseTxt,aTotais[06],oFont08:oFont)
-oDanfe:Box(nLine+353,232,nLine+378,352)
-oDanfe:Say(nLine+361,242,"VALOR DO SEGURO",oFont08N:oFont)
-oDanfe:Say(nLine+371,242,aTotais[07],oFont08:oFont)
-oDanfe:Box(nLine+353,352,nLine+378,452)
-oDanfe:Say(nLine+361,362,"DESCONTO",oFont08N:oFont)
-oDanfe:Say(nLine+371,362,aTotais[08],oFont08:oFont)
-oDanfe:Box(nLine+353,452,nLine+378,592)
-oDanfe:Say(nLine+361,462,"OUTRAS DESPESAS ACESS”RIAS",oFont08N:oFont)
-oDanfe:Say(nLine+371,462,aTotais[09],oFont08:oFont)
-oDanfe:Box(nLine+353,592,nLine+378,712)
-oDanfe:Say(nLine+361,602,"VALOR TOTAL DO IPI",oFont08N:oFont)
-oDanfe:Say(nLine+371,602,aTotais[10],oFont08:oFont)
-oDanfe:Box(nLine+353,712,nLine+378,MAXBOXH+70)
-oDanfe:Say(nLine+361,722,"VALOR TOTAL DA NOTA",oFont08N:oFont)
-oDanfe:Say(nLine+371,722,aTotais[11],oFont08:oFont)
+oDanfe:Box(nLine+353+nAjustaImp,nBaseCol+30,nLine+378+nAjustaImp,232)
+oDanfe:Say(nLine+361+nAjustaImp,nBaseTxt,"VALOR DO FRETE",oFont08N:oFont)
+oDanfe:Say(nLine+371+nAjustaImp,nBaseTxt,aTotais[06],oFont08:oFont)
+oDanfe:Box(nLine+353+nAjustaImp,232,nLine+378+nAjustaImp,352)
+oDanfe:Say(nLine+361+nAjustaImp,242,"VALOR DO SEGURO",oFont08N:oFont)
+oDanfe:Say(nLine+371+nAjustaImp,242,aTotais[07],oFont08:oFont)
+oDanfe:Box(nLine+353+nAjustaImp,352,nLine+378+nAjustaImp,452)
+oDanfe:Say(nLine+361+nAjustaImp,362,"DESCONTO",oFont08N:oFont)
+oDanfe:Say(nLine+371+nAjustaImp,362,aTotais[08],oFont08:oFont)
+oDanfe:Box(nLine+353+nAjustaImp,452,nLine+378+nAjustaImp,592)
+oDanfe:Say(nLine+361+nAjustaImp,462,"OUTRAS DESPESAS ACESS”RIAS",oFont08N:oFont)
+oDanfe:Say(nLine+371+nAjustaImp,462,aTotais[09],oFont08:oFont)
+oDanfe:Box(nLine+353+nAjustaImp,592,nLine+378+nAjustaImp,712)
+oDanfe:Say(nLine+361+nAjustaImp,602,"VALOR TOTAL DO IPI",oFont08N:oFont)
+oDanfe:Say(nLine+371+nAjustaImp,602,aTotais[10],oFont08:oFont)
+oDanfe:Box(nLine+353+nAjustaImp,712,nLine+378+nAjustaImp,MAXBOXH+70)
+oDanfe:Say(nLine+361+nAjustaImp,722,"VALOR TOTAL DA NOTA",oFont08N:oFont)
+oDanfe:Say(nLine+371+nAjustaImp,722,aTotais[11],oFont08:oFont)
 
 nLine -= 3
+
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
 //≥Transportador/Volumes transportados                                     ≥
 //¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
 nBaseTxt -= 30 
 //oDanfe:Box(nLine+379,nBaseCol,nLine+452,nBaseCol+30)
-oDanfe:FillRect({nLine+380,nBaseCol,nLine+451,nBaseCol+30},oBrush)
-oDanfe:Say(nLine+446,nBaseTxt   ,"TRANSPORTADOR/" ,oFont08N:oFont, , CLR_WHITE, 270 )
-oDanfe:Say(nLine+438,nBaseTxt+7 ,"VOLUMES"        ,oFont08N:oFont, , CLR_WHITE, 270 )
-oDanfe:Say(nLine+448,nBaseTxt+14,"TRANSPORTADOS"  ,oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:FillRect({nLine+380+nAjustaVt,nBaseCol,nLine+451+nAjustaVt,nBaseCol+30},oBrush)   //ANALISAR
+oDanfe:Say(nLine+446+nAjustaVt,nBaseTxt   ,"TRANSPORTADOR/" ,oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:Say(nLine+438+nAjustaVt,nBaseTxt+7 ,"VOLUMES"        ,oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:Say(nLine+448+nAjustaVt,nBaseTxt+14,"TRANSPORTADOS"  ,oFont08N:oFont, , CLR_WHITE, 270 )
 nBaseTxt += 30 
 
-oDanfe:Box(nLine+379,nBaseCol+30,nLine+404,402)
-oDanfe:Say(nLine+387,nBaseTxt,"RAZ√O SOCIAL",oFont08N:oFont)
-oDanfe:Say(nLine+397,nBaseTxt,aTransp[01],oFont08:oFont)
-oDanfe:Box(nLine+379,402,nLine+404,482)
-oDanfe:Say(nLine+387,412,"FRETE POR CONTA",oFont08N:oFont)
+oDanfe:Box(nLine+379+nAjustaVt,nBaseCol+30,nLine+404+nAjustaVt,402)
+oDanfe:Say(nLine+387+nAjustaVt,nBaseTxt,"RAZ√O SOCIAL",oFont08N:oFont)
+oDanfe:Say(nLine+397+nAjustaVt,nBaseTxt,aTransp[01],oFont08:oFont)
+oDanfe:Box(nLine+379+nAjustaVt,402,nLine+404+nAjustaVt,482)
+oDanfe:Say(nLine+387+nAjustaVt,412,"FRETE POR CONTA",oFont08N:oFont)
 If cModFrete =="0"
-	oDanfe:Say(nLine+397,412,"0-EMITENTE",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"0-REMETENTE",oFont08:oFont)
 ElseIf cModFrete =="1"
-	oDanfe:Say(nLine+397,412,"1-DEST/REM",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"1-DESTINATARIO",oFont08:oFont)
 ElseIf cModFrete =="2"
-	oDanfe:Say(nLine+397,412,"2-TERCEIROS",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"2-TERCEIROS",oFont08:oFont)
 ElseIf cModFrete =="3"
-	oDanfe:Say(nLine+397,412,"3-REMETENTE",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"3-TRANSP PROP/REM",oFont08:oFont)
 ElseIf cModFrete =="4"
-	oDanfe:Say(nLine+397,412,"4-DESTINATARIO",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"4-TRANSP PROP/DEST",oFont08:oFont)
 ElseIf cModFrete =="9"
-	oDanfe:Say(nLine+397,412,"9-SEM FRETE",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"9-SEM FRETE",oFont08:oFont)
 Else
-	oDanfe:Say(nLine+397,412,"",oFont08:oFont)
+	oDanfe:Say(nLine+397+nAjustaVt,412,"",oFont08:oFont)
 Endif
-oDanfe:Box(nLine+379,482,nLine+404,562)
-oDanfe:Say(nLine+387,492,"C”DIGO ANTT",oFont08N:oFont)
-oDanfe:Say(nLine+397,492,aTransp[03],oFont08:oFont)
-oDanfe:Box(nLine+379,562,nLine+404,652)
-oDanfe:Say(nLine+387,572,"PLACA DO VEÕCULO",oFont08N:oFont)
-oDanfe:Say(nLine+397,572,aTransp[04],oFont08:oFont)
-oDanfe:Box(nLine+379,652,nLine+404,702)
-oDanfe:Say(nLine+387,662,"UF",oFont08N:oFont)
-oDanfe:Say(nLine+397,662,aTransp[05],oFont08:oFont)
-oDanfe:Box(nLine+379,702,nLine+404,MAXBOXH+70)
-oDanfe:Say(nLine+387,712,"CNPJ/CPF",oFont08N:oFont)
-oDanfe:Say(nLine+397,712,aTransp[06],oFont08:oFont)
+oDanfe:Box(nLine+379+nAjustaVt,482,nLine+404+nAjustaVt,562)
+oDanfe:Say(nLine+387+nAjustaVt,492,"C”DIGO ANTT",oFont08N:oFont)
+oDanfe:Say(nLine+397+nAjustaVt,492,aTransp[03],oFont08:oFont)
+oDanfe:Box(nLine+379+nAjustaVt,562,nLine+404+nAjustaVt,652)
+oDanfe:Say(nLine+387+nAjustaVt,572,"PLACA DO VEÕCULO",oFont08N:oFont)
+oDanfe:Say(nLine+397+nAjustaVt,572,aTransp[04],oFont08:oFont)
+oDanfe:Box(nLine+379+nAjustaVt,652,nLine+404+nAjustaVt,702)
+oDanfe:Say(nLine+387+nAjustaVt,662,"UF",oFont08N:oFont)
+oDanfe:Say(nLine+397+nAjustaVt,662,aTransp[05],oFont08:oFont)
 
-oDanfe:Box(nLine+404,nBaseCol+30,nLine+429,402)
-oDanfe:Say(nLine+412,nBaseTxt,"ENDERE«O",oFont08N:oFont)
-oDanfe:Say(nLine+422,nBaseTxt,aTransp[07],oFont08:oFont)
-oDanfe:Box(nLine+404,402,nLine+429,652)
-oDanfe:Say(nLine+412,412,"MUNICIPIO",oFont08N:oFont)
-oDanfe:Say(nLine+422,412,aTransp[08],oFont08:oFont)
-oDanfe:Box(nLine+404,652,nLine+429,702)
-oDanfe:Say(nLine+412,662,"UF",oFont08N:oFont)
-oDanfe:Say(nLine+422,662,aTransp[09],oFont08:oFont)
-oDanfe:Box(nLine+404,702,nLine+429,MAXBOXH+70)
-oDanfe:Say(nLine+412,712,"INSCRI«√O ESTADUAL",oFont08N:oFont)
-oDanfe:Say(nLine+422,712,aTransp[10],oFont08:oFont)
+oDanfe:Box(nLine+379+nAjustaVt,702,nLine+404+nAjustaVt,MAXBOXH+70)
+oDanfe:Say(nLine+387+nAjustaVt,712,"CNPJ/CPF",oFont08N:oFont)
+oDanfe:Say(nLine+397+nAjustaVt,712,aTransp[06],oFont08:oFont)
 
-oDanfe:Box(nLine+429,nBaseCol+30,nLine+454,232)
-oDanfe:Say(nLine+437,nBaseTxt,"QUANTIDADE",oFont08N:oFont)
-oDanfe:Say(nLine+447,nBaseTxt,aTransp[11],oFont08:oFont)
-oDanfe:Box(nLine+429,232,nLine+454,352)
-oDanfe:Say(nLine+437,242,"ESPECIE",oFont08N:oFont)
-oDanfe:Say(nLine+447,242,Iif(!Empty(aTransp[12]),aTransp[12],Iif(Len(aEspVol)>0,aEspVol[1][1],"")),oFont08:oFont)
+oDanfe:Box(nLine+404+nAjustaVt,nBaseCol+30,nLine+429+nAjustaVt,402)
+oDanfe:Say(nLine+412+nAjustaVt,nBaseTxt,"ENDERE«O",oFont08N:oFont)
+oDanfe:Say(nLine+422+nAjustaVt,nBaseTxt,aTransp[07],oFont08:oFont)
+oDanfe:Box(nLine+404+nAjustaVt,402,nLine+429+nAjustaVt,652)
+oDanfe:Say(nLine+412+nAjustaVt,412,"MUNICIPIO",oFont08N:oFont)
+oDanfe:Say(nLine+422+nAjustaVt,412,aTransp[08],oFont08:oFont)
+oDanfe:Box(nLine+404+nAjustaVt,652,nLine+429+nAjustaVt,702)
+oDanfe:Say(nLine+412+nAjustaVt,662,"UF",oFont08N:oFont)
+oDanfe:Say(nLine+422+nAjustaVt,662,aTransp[09],oFont08:oFont)
+oDanfe:Box(nLine+404+nAjustaVt,702,nLine+429+nAjustaVt,MAXBOXH+70)
+oDanfe:Say(nLine+412+nAjustaVt,712,"INSCRI«√O ESTADUAL",oFont08N:oFont)
+oDanfe:Say(nLine+422+nAjustaVt,712,aTransp[10],oFont08:oFont)
+
+oDanfe:Box(nLine+429+nAjustaVt,nBaseCol+30,nLine+454+nAjustaVt,169)
+oDanfe:Say(nLine+437+nAjustaVt,nBaseTxt,"QUANTIDADE",oFont08N:oFont)
+oDanfe:Say(nLine+447+nAjustaVt,nBaseTxt,aTransp[11],oFont08:oFont)
+oDanfe:Box(nLine+429+nAjustaVt,169,nLine+454+nAjustaVt,352)
+oDanfe:Say(nLine+437+nAjustaVt,179,"ESPECIE",oFont08N:oFont)
+oDanfe:Say(nLine+447+nAjustaVt,179,Iif(!Empty(aTransp[12]),aTransp[12],Iif(Len(aEspVol)>0,aEspVol[1][1],"")),oFont08:oFont)
 //oDanfe:Say(nLine+447,242,aEspVol[1][1],oFont08:oFont)
-oDanfe:Box(nLine+429,352,nLine+454,472)
-oDanfe:Say(nLine+437,362,"MARCA",oFont08N:oFont)
-oDanfe:Say(nLine+447,362,aTransp[13],oFont08:oFont)
-oDanfe:Box(nLine+429,472,nLine+454,592)
-oDanfe:Say(nLine+437,482,"NUMERA«√O",oFont08N:oFont)
-oDanfe:Say(nLine+447,482,aTransp[14],oFont08:oFont)
-oDanfe:Box(nLine+429,592,nLine+454,712)
-oDanfe:Say(nLine+437,602,"PESO BRUTO",oFont08N:oFont)
-oDanfe:Say(nLine+447,602,Iif(!Empty(aTransp[15]),aTransp[15],Iif(Len(aEspVol)>0 .And. Val(aEspVol[1][3])>0,Transform(Val(aEspVol[1][3]),"@E 999999.9999"),"")),oFont08:oFont)
+oDanfe:Box(nLine+429+nAjustaVt,352,nLine+454+nAjustaVt,472)
+oDanfe:Say(nLine+437+nAjustaVt,362,"MARCA",oFont08N:oFont)
+oDanfe:Say(nLine+447+nAjustaVt,362,aTransp[13],oFont08:oFont)
+oDanfe:Box(nLine+429+nAjustaVt,472,nLine+454+nAjustaVt,592)
+oDanfe:Say(nLine+437+nAjustaVt,482,"NUMERA«√O",oFont08N:oFont)
+oDanfe:Say(nLine+447+nAjustaVt,482,aTransp[14],oFont08:oFont)
+oDanfe:Box(nLine+429+nAjustaVt,592,nLine+454+nAjustaVt,712)
+oDanfe:Say(nLine+437+nAjustaVt,602,"PESO BRUTO",oFont08N:oFont)
+oDanfe:Say(nLine+447+nAjustaVt,602,Iif(!Empty(aTransp[15]),aTransp[15],Iif(Len(aEspVol)>0 .And. Val(aEspVol[1][3])>0,Transform(Val(aEspVol[1][3]),"@E 999999.9999"),"")),oFont08:oFont)
 //oDanfe:Say(nLine+447,602,Iif (!Empty(aEspVol[1][3]),Transform(val(aEspVol[1][3]),"@E 999999.9999"),""),oFont08:oFont)
-oDanfe:Box(nLine+429,712,nLine+454,MAXBOXH+70)
-oDanfe:Say(nLine+437,722,"PESO LIQUIDO",oFont08N:oFont)
-oDanfe:Say(nLine+447,722,Iif(!Empty(aTransp[16]),aTransp[16],Iif(Len(aEspVol)>0 .And. Val(aEspVol[1][2])>0,Transform(Val(aEspVol[1][2]),"@E 999999.9999"),"")),oFont08:oFont)
+oDanfe:Box(nLine+429+nAjustaVt,712,nLine+454+nAjustaVt,MAXBOXH+70)
+oDanfe:Say(nLine+437+nAjustaVt,722,"PESO LIQUIDO",oFont08N:oFont)
+oDanfe:Say(nLine+447+nAjustaVt,722,Iif(!Empty(aTransp[16]),aTransp[16],Iif(Len(aEspVol)>0 .And. Val(aEspVol[1][2])>0,Transform(Val(aEspVol[1][2]),"@E 999999.9999"),"")),oFont08:oFont)
 //oDanfe:Say(nLine+447,722,aTransp[16],oFont08:oFont)
 
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
@@ -2644,23 +2979,23 @@ oDanfe:Say(nLine+447,722,Iif(!Empty(aTransp[16]),aTransp[16],Iif(Len(aEspVol)>0 
 
 nBaseTxt -= 30 
 //oDanfe:Box(nLine+573,nBaseCol,nLine+597,nBaseCol+30)
-oDanfe:FillRect({nLine+574,nBaseCol,nLine+596,nBaseCol+30},oBrush)
+oDanfe:FillRect({nLine+574+nAjustaISSQN,nBaseCol,nLine+596+nAjustaISSQN,nBaseCol+30},oBrush)
 //oDanfe:Box(nLine+574,nBaseCol+1,nLine+596,nBaseCol+29)
-oDanfe:Say(nLine+596,nBaseTxt+7,"ISSQN",oFont08N:oFont, , CLR_WHITE, 270 )
+oDanfe:Say(nLine+596+nAjustaISSQN,nBaseTxt+7,"ISSQN",oFont08N:oFont, , CLR_WHITE, 270 )
 nBaseTxt += 30 
 
-oDanfe:Box(nLine+573,nBaseCol+30,nLine+597,302)
-oDanfe:Say(nLine+581,nBaseTxt,"INSCRI«√O MUNICIPAL",oFont08N:oFont)
-oDanfe:Say(nLine+591,nBaseTxt,aISSQN[1],oFont08:oFont)
-oDanfe:Box(nLine+573,302,nLine+597,502)
-oDanfe:Say(nLine+581,312,"VALOR TOTAL DOS SERVI«OS",oFont08N:oFont)
-oDanfe:Say(nLine+591,312,aISSQN[2],oFont08:oFont)
-oDanfe:Box(nLine+573,502,nLine+597,702)
-oDanfe:Say(nLine+581,512,"BASE DE C¡LCULO DO ISSQN",oFont08N:oFont)
-oDanfe:Say(nLine+591,512,aISSQN[3],oFont08:oFont)
-oDanfe:Box(nLine+573,702,nLine+597,MAXBOXH+70)
-oDanfe:Say(nLine+581,712,"VALOR DO ISSQN",oFont08N:oFont)
-oDanfe:Say(nLine+591,712,aISSQN[4],oFont08:oFont)
+oDanfe:Box(nLine+573+nAjustaISSQN,nBaseCol+30,nLine+597+nAjustaISSQN,302)
+oDanfe:Say(nLine+581+nAjustaISSQN,nBaseTxt,"INSCRI«√O MUNICIPAL",oFont08N:oFont)
+oDanfe:Say(nLine+591+nAjustaISSQN,nBaseTxt,aISSQN[1],oFont08:oFont)
+oDanfe:Box(nLine+573+nAjustaISSQN,302,nLine+597+nAjustaISSQN,502)
+oDanfe:Say(nLine+581+nAjustaISSQN,312,"VALOR TOTAL DOS SERVI«OS",oFont08N:oFont)
+oDanfe:Say(nLine+591+nAjustaISSQN,312,aISSQN[2],oFont08:oFont)
+oDanfe:Box(nLine+573+nAjustaISSQN,502,nLine+597+nAjustaISSQN,702)
+oDanfe:Say(nLine+581+nAjustaISSQN,512,"BASE DE C¡LCULO DO ISSQN",oFont08N:oFont)
+oDanfe:Say(nLine+591+nAjustaISSQN,512,aISSQN[3],oFont08:oFont)
+oDanfe:Box(nLine+573+nAjustaISSQN,702,nLine+597+nAjustaISSQN,MAXBOXH+70)
+oDanfe:Say(nLine+581+nAjustaISSQN,712,"VALOR DO ISSQN",oFont08N:oFont)
+oDanfe:Say(nLine+591+nAjustaISSQN,712,aISSQN[4],oFont08:oFont)
 
 
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
@@ -2794,178 +3129,145 @@ aTamCol := RetTamCol(aAuxCabec, aAux, oDanfe, oFont08N:oFont, oFont07:oFont)
 aColProd := {}
 DanfeIT(oDanfe, @nLine, @nBaseCol, @nBaseTxt, nFolha, nFolhas, @aColProd, aMensagem, nPosMsg, aTamCol)
 
-lPag1 := .T.
-lPag2 := .F.
-lPagX := .F.
-lInfoAd:= .F.
-
 nFolha++
-nLinha    :=nLine+478
-nL:=0  
+nLinha	:= nLine+478
+nL		:= 0  
+
+lVerso := MV_PAR05 == 1
 
 For nY := 1 To nLenItens
-	nL++
-	If lPag1
-		If nL > MAXITEM .And. nFolha == 2
+
+	nL++	
+	If nY > nMaxItem
+		nAjustaPro := 0
+	endif 
+
+	if nL > nMaxItem
+		if nPosMsg > 0 .and. nPosMsg <= Len(aMensagem) 
+			nMaxItem := MAXITEMP2 // 22 itens
+		else 
+			nMaxItem := MAXITEMP2F // 44 itens
+		endif
+		if lVerso // Imprime no verso?
+			if (nFolha % 2==0) // Somente folha par
+				nMaxItem := MAXITEMP3 // 22 itens
+			endif
+		endif
+
 			oDanfe:EndPage()
 			oDanfe:StartPage()
 			nLinha    	:=	181
 
 			DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,@nLine,@nBaseCol,@nBaseTxt,aUf)			
 			DanfeIT(oDanfe, @nLine, @nBaseCol, @nBaseTxt, nFolha, nFolhas, @aColProd, aMensagem, nPosMsg, aTamCol)
-			If nPosMsg > 0
+			
+			if nPosMsg > 0 .and. (!lVerso .or. (nFolha % 2 !=0) ) // Impress„o no verso somente em folha par e sem mensagem complementar.
 				DanfeInfC(oDanfe,aMensagem,@nBaseTxt,@nBaseCol,@nLine,@nPosMsg,nFolha)
-				lInfoAd := .T.
 			EndIf	
-			nL :=0
-			lPag1 := .F.
-			lPag2 := .T.
-			nLinha := 169
-		Endif           
-	Endif
 
-	If lPag2  .And. lInfoAd
-		If	nL > MAXITEMP4
-			nFolha++
-			oDanfe:EndPage()
-			oDanfe:StartPage()
-			nColLim		:=	Iif(!(nfolha-1)%2==0 .And. MV_PAR05==1,435,865)
-			nLinha    	:=	181
-			
-			DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,@nLine,@nBaseCol,@nBaseTxt,aUf)			
-			DanfeIT(oDanfe, @nLine, @nBaseCol, @nBaseTxt, nFolha, nFolhas, @aColProd, aMensagem, nPosMsg, aTamCol)  
+			nL := 1
 			nLinha := 169
-	
-			nL:=0
-			lPag2 := .F.
-			lPagX := .T.      
-			lInfoAd:= .F.
-		EndIf
-	Else
-		If	nL >= MAXITEMP2
-			nFolha++
-			oDanfe:EndPage()
-			oDanfe:StartPage()
-			nColLim		:=	Iif(!(nfolha-1)%2==0 .And. MV_PAR05==1,435,865)
-			nLinha    	:=	181
-			
-			DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,@nLine,@nBaseCol,@nBaseTxt,aUf)			
-			DanfeIT(oDanfe, @nLine, @nBaseCol, @nBaseTxt, nFolha, nFolhas, @aColProd, aMensagem, nPosMsg, aTamCol)
-			nLinha := 169
-	
-			nL:=0		
-		EndIf
-	EndIf
-	
+			nFolha++   
+	Endif
+	/* 
+		Impress„o dos itens da NFe
+	*/
 	If aAux[1][1][nY] == "-"
-		oDanfe:Say(nLinha, aColProd[1][1] + 2, Replicate("- ", 192), oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[1][1] + 2, Replicate("- ", 192), oFont07:oFont)
 	Else
-		oDanfe:Say(nLinha, aColProd[1][1] + 2, aAux[1][1][nY], oFont07:oFont)
-		oDanfe:Say(nLinha, aColProd[2][1] + 2, aAux[1][2][nY], oFont07:oFont)
-		oDanfe:Say(nLinha, aColProd[3][1] + 2, aAux[1][3][nY], oFont07:oFont)
-		oDanfe:Say(nLinha, aColProd[4][1] + 2, aAux[1][4][nY], oFont07:oFont)
-		oDanfe:Say(nLinha, aColProd[5][1] + 2, aAux[1][5][nY], oFont07:oFont)
-		oDanfe:Say(nLinha, aColProd[6][1] + 2, aAux[1][6][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[1][1] + 2, aAux[1][1][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[2][1] + 2, aAux[1][2][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[3][1] + 2, aAux[1][3][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[4][1] + 2, aAux[1][4][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[5][1] + 2, aAux[1][5][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, aColProd[6][1] + 2, aAux[1][6][nY], oFont07:oFont)
 		nAuxH2 :=  len(aAux[1][7][nY]) + (aColProd[7][1] + ((aColProd[7][2] - aColProd[7][1]) - RetTamTex(aAux[1][7][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][7][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][7][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][8][nY]) + (aColProd[8][1] + ((aColProd[8][2] - aColProd[8][1]) - RetTamTex(aAux[1][8][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][8][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][8][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][9][nY]) + (aColProd[9][1] + ((aColProd[9][2] - aColProd[9][1]) - RetTamTex(aAux[1][9][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][9][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][9][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][10][nY]) + (aColProd[10][1] + ((aColProd[10][2] - aColProd[10][1]) - RetTamTex(aAux[1][10][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][10][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][10][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][11][nY]) + (aColProd[11][1] + ((aColProd[11][2] - aColProd[11][1]) - RetTamTex(aAux[1][11][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][11][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][11][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][12][nY]) + (aColProd[12][1] + ((aColProd[12][2] - aColProd[12][1]) - RetTamTex(aAux[1][12][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][12][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][12][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][13][nY]) + (aColProd[13][1] + ((aColProd[13][2] - aColProd[13][1]) - RetTamTex(aAux[1][13][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][13][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][13][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][14][nY]) + (aColProd[14][1] + ((aColProd[14][2] - aColProd[14][1]) - RetTamTex(aAux[1][14][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][14][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][14][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][15][nY]) + (aColProd[15][1] + ((aColProd[15][2] - aColProd[15][1]) - RetTamTex(aAux[1][15][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][15][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][15][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][16][nY]) + (aColProd[16][1] + ((aColProd[16][2] - aColProd[16][1]) - RetTamTex(aAux[1][16][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][16][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][16][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][17][nY]) + (aColProd[17][1] + ((aColProd[17][2] - aColProd[17][1]) - RetTamTex(aAux[1][17][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][17][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][17][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][18][nY]) + (aColProd[18][1] + ((aColProd[18][2] - aColProd[18][1]) - RetTamTex(aAux[1][18][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][18][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][18][nY], oFont07:oFont)
 		
 		nAuxH2 := len(aAux[1][19][nY]) + (aColProd[19][1] + ((aColProd[19][2] - aColProd[19][1]) - RetTamTex(aAux[1][19][nY], oFont07:oFont, oDanfe)))
-		oDanfe:Say(nLinha, nAuxH2, aAux[1][19][nY], oFont07:oFont)
+		oDanfe:Say(nLinha+nAjustaPro, nAuxH2, aAux[1][19][nY], oFont07:oFont)
 	EndIf
-	
 	nLinha := nLinha + 10 
 Next nY 
-If nL <= MAXITEM .And. Len(aMensagem) > MAXMSG .And. nFolha == 2 .And. nLenItens <= MAXMSG
-	oDanfe:EndPage()
-	oDanfe:StartPage()
-	nLinha    	:=	181                
-	DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,@nLine,@nBaseCol,@nBaseTxt,aUf)
-	DanfeIT(oDanfe, @nLine, @nBaseCol, @nBaseTxt, nFolha, nFolhas, @aColProd, aMensagem, nPosMsg, aTamCol)
-	If nPosMsg > 0
-		DanfeInfC(oDanfe,aMensagem,@nBaseTxt,@nBaseCol,@nLine,@nPosMsg,nFolha)
-	EndIf
-elseif nPosMsg > 0 
-	oDanfe:EndPage()
-	oDanfe:StartPage()
-	nLinha    	:=	181                
-	DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,@nLine,@nBaseCol,@nBaseTxt,aUf)
-	
-	DanfeInfC(oDanfe,aMensagem,@nBaseTxt,@nBaseCol,@nLine,@nPosMsg,nFolha,.T.)
-Endif
 
-//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
-//≥Finaliza a Impress„o                                                    ≥
-//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
-If lPreview
-	//	oDanfe:Preview()
-EndIf
+/* Impress„o de mensagem complementar, caso ainda n„o tenha finalizado */
+
+nLenMensagens := Len(aMensagem)
+While nPosMsg > 0 .and. nPosMsg <= nLenMensagens
+	oDanfe:EndPage()
+	oDanfe:StartPage()
+	nLinha    	:=	181                
+	DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,@nLine,@nBaseCol,@nBaseTxt,aUf)
+	DanfeInfC(oDanfe,aMensagem,@nBaseTxt,@nBaseCol,@nLine,@nPosMsg,nFolha,.T.)
+	nFolha++
+EndDo
+
+nMaxItem :=  MAXITEM
+
+/* Finaliza a Impress„o */
 
 oDanfe:EndPage()
 
-Return(.T.)
+/*------------------------------------------------------------------------------------------------
+	Tratamento para nao imprimir DANFEs diferentes na mesma folha, uma na FRENTE e outra no VERSO
+		quando MV_PAR05 =1 (frente e verso = sim)
+------------------------------------------------------------------------------------------------*/
 
-                                                              
-/*
-‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
-±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
-±±⁄ƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒø±±
-±±≥FunáÖo    ≥ DanfeCab  ≥ Autor ≥ Roberto Souza        ≥ Data ≥ 13/08/10 ≥±±
-±±√ƒƒƒƒƒƒƒƒƒƒ≈ƒƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒ¥±±
-±±≥DescriáÖo ≥ Definicao do Cabecalho do documento.                       ≥±±
-±±≥			 ≥                                                            ≥±±
-±±√ƒƒƒƒƒƒƒƒƒƒ≈ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¥±±
-±±≥ Uso      ≥ FAT/FIS                                                    ≥±±
-±±¿ƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ±±
-±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
-ﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂ
-*/
+if lVerso .And. MV_PAR01 <> MV_PAR02 
+	If nFolhas %2 <> 0 
+		oDanfe:StartPage()
+		oDanfe:EndPage()
+	EndIf
+EndIf
+
+Return (.T.)
+
+//-----------------------------------------------------------------------
+/*/{Protheus.doc} DanfeCab
+Definicao do Cabecalho do documento.
+ 
+@author 	Roberto Souza
+@since 		13/08/10
+@version 	1.0
+/*/
+//-----------------------------------------------------------------------                                                    
 Static Function DanfeCab(oDanfe,nPosV,oNFe,oIdent,oEmitente,nFolha,nFolhas,cCodAutSef,oNfeDPEC,cCodAutDPEC,cDtHrRecCab,dDtReceb,nLine,nBaseCol,nBaseTxt,aUf)
 
-Local aTamanho   := {}
-//Local aUF		 := {}
-Local nHPage     := 0
-Local nVPage     := 0
-Local nPosVOld   := 0
-Local nPosH      := 0
-Local nPosHOld   := 0
-Local nAuxV      := 0
-Local nAuxH      := 0
 Local cChaveCont := ""
 Local cDataEmi   := ""
-Local cDigito    := ""
 Local cTPEmis    := ""
 Local cValIcm    := ""
 Local cICMSp     := ""
@@ -2974,8 +3276,8 @@ Local cUF		 := ""
 Local cCNPJCPF	 := ""
 Local cLogo      := FisxLogo("1")
 Local lConverte  := GetNewPar("MV_CONVERT",.F.)
-Local lMv_Logod := If( GetNewPar("MV_LOGOD", "N" ) == "S", .T., .F. )
-Local cLogoD	:= ""
+Local lMv_Logod	 := If( GetNewPar("MV_LOGOD", "N" ) == "S", .T., .F. )
+Local cLogoD	 := ""
 
 Local cDescLogo		:= ""
 Local cGrpCompany	:= ""
@@ -2985,7 +3287,6 @@ Local cFilGrp		:= ""
 
 Private oDPEC    := oNfeDPEC
 
-
 Default cCodAutSef := ""
 Default cCodAutDPEC:= ""
 Default cDtHrRecCab:= ""
@@ -2994,8 +3295,6 @@ Default dDtReceb   := CToD("")
 nLine    := -42
 nBaseCol := 70
 
-// PICOTE DO RECIBO
-//oDanfe:Say(MAXBOXV, INIBOXH+80, Replicate("- ",500), oFont08N:oFont, , , 270 )
 oDanfe:Say(000, INIBOXH+74, Replicate("- ",150), oFont08N:oFont, , , 90 )
 
 oDanfe:Box(nLine+135, INIBOXH+10, MAXBOXV, INIBOXH+35)
@@ -3013,7 +3312,7 @@ oDanfe:Box(nLine+135,INIBOXH+35,nLine+500,INIBOXH+70)
 oDanfe:Say(MAXBOXV-150, INIBOXH+45, "IDENTIFICA«√O E ASSINATURA DO RECEBEDOR", oFont07N:oFont, , , 270)
 
 oDanfe:Box(nLine+042, INIBOXH+10, nLine+135, INIBOXH+70)
-oDanfe:Say(MAXBOXV-550, INIBOXH+20, "NF-e", oFont08N:oFont, , , 270)
+oDanfe:Say(MAXBOXV-550, INIBOXH+20, iif(lNFCE,"NFC-e","NF-e"), oFont08N:oFont, , , 270)
 oDanfe:Say(MAXBOXV-520, INIBOXH+35, "N∫ "+StrZero(Val(oIdent:_NNf:Text),9), oFont08:oFont, , , 270)
 oDanfe:Say(MAXBOXV-520, INIBOXH+45, "S…RIE "+SubStr(oIdent:_Serie:Text,1,3), oFont08:oFont, , , 270)
 
@@ -3070,7 +3369,12 @@ nBaseTxt := 460
 oDanfe:Box(nLine+042,450,nLine+139,602)
 oDanfe:Say(nLine+055,nBaseTxt+35, "DANFE",oFont18N:oFont)
 oDanfe:Say(nLine+065,nBaseTxt+10, "DOCUMENTO AUXILIAR DA",oFont10:oFont)
-oDanfe:Say(nLine+075,nBaseTxt+10, "NOTA FISCAL ELETR‘NICA",oFont10:oFont)
+
+if lNFCE
+	oDanfe:Say(nLine+075,nBaseTxt+10, "NOTA FISCAL DE CONSUMIDOR",oFont10:oFont)
+else
+	oDanfe:Say(nLine+075,nBaseTxt+10, "NOTA FISCAL ELETR‘NICA",oFont10:oFont)
+endif
 oDanfe:Say(nLine+085,nBaseTxt+15, "0-ENTRADA",oFont10:oFont)
 oDanfe:Say(nLine+095,nBaseTxt+15, "1-SAÕDA"  ,oFont10:oFont)
 oDanfe:Box(nLine+078,nBaseTxt+70,nLine+092,nBaseTxt+85)
@@ -3078,13 +3382,6 @@ oDanfe:Say(nLine+088,nBaseTxt+75, oIdent:_TpNf:Text,oFont10N:oFont)
 oDanfe:Say(nLine+110,nBaseTxt,"N. "+StrZero(Val(oIdent:_NNf:Text),9),oFont10N:oFont)
 oDanfe:Say(nLine+120,nBaseTxt,"S…RIE "+SubStr(oIdent:_Serie:Text,1,3),oFont10N:oFont)
 oDanfe:Say(nLine+130,nBaseTxt,"FOLHA "+StrZero(nFolha,2)+"/"+StrZero(nFolhas,2),oFont10N:oFont)
-
-nHPage := oDanfe:nHorzRes()
-nHPage *= (300/PixelX)
-nHPage -= HMARGEM
-nVPage := oDanfe:nVertRes()
-nVPage *= (300/PixelY)
-nVPage -= VBOX
 
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
 //≥Logotipo                                     ≥
@@ -3131,7 +3428,7 @@ oDanfe:Say(nLine+097,nBaseTxt,TransForm(SubStr(oNF:_InfNfe:_ID:Text,4),"@r 9999 
 
 
 If nFolha >= 1
-	oDanfe:Say(nLine+087,nBaseTxt,"CHAVE DE ACESSO DA NF-E",oFont09N:oFont)
+	oDanfe:Say(nLine+087,nBaseTxt,"CHAVE DE ACESSO DA "+iif(lNFCE,"NFC-E","NF-E"),oFont09N:oFont)
 	nFontSize := 28
 	oDanfe:Code128C(nLine+072,nBaseTxt,SubStr(oNF:_InfNfe:_ID:Text,4), nFontSize )
 EndIf
@@ -3183,12 +3480,12 @@ If !Empty(cUF) .And. !Empty(cDataEmi) .And. !Empty(cTPEmis) .And. !Empty(cValIcm
 EndIf
 
 If Empty(cChaveCont)
-	oDanfe:Say(nLine+117,nBaseTxt,"Consulta de autenticidade no portal nacional da NF-e",oFont10:oFont)
+	oDanfe:Say(nLine+117,nBaseTxt,"Consulta de autenticidade no portal nacional da "+iif(lNFCE,"NFC-e","NF-e"),oFont10:oFont)
 	oDanfe:Say(nLine+127,nBaseTxt,"www.nfe.fazenda.gov.br/portal ou no site da SEFAZ Autorizada",oFont10:oFont)
 Endif
 
 If  !Empty(cCodAutDPEC)
-	oDanfe:Say(nLine+117,nBaseTxt,"Consulta de autenticidade no portal nacional da NF-e",oFont10:oFont)
+	oDanfe:Say(nLine+117,nBaseTxt,"Consulta de autenticidade no portal nacional da "+iif(lNFCE,"NFC-e","NF-e"),oFont10:oFont)
 	oDanfe:Say(nLine+127,nBaseTxt,"www.nfe.fazenda.gov.br/portal ou no site da SEFAZ Autorizada",oFont10:oFont)
 Endif
 
@@ -3227,41 +3524,46 @@ If(((Val(SubStr(oNF:_INFNFE:_IDE:_SERIE:TEXT,1,3)) >= 900).And.(oNFe:_NFE:_INFNF
 	oDanfe:Say(nLine+148,610,"PROTOCOLO DE AUTORIZA«√O DE USO",oFont08N:oFont)
 Endif
 If((oNFe:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT)$"25")
-	oDanfe:Say(nLine+148,610,"DADOS DA NF-E",oFont08N:oFont)
+	oDanfe:Say(nLine+148,610,"DADOS DA "+iif(lNFCE,"NFC-E","NF-E"),oFont08N:oFont)
 Endif
 oDanfe:Say(nLine+158,610,IIF(!Empty(cCodAutDPEC),cCodAutDPEC+" "+AllTrim(IIF(!Empty(dDtReceb),ConvDate(DTOS(dDtReceb)),Iif(oNF:_INFNFE:_VERSAO:TEXT >= "3.10",ConvDate(oNF:_InfNfe:_IDE:_DHEMI:Text),ConvDate(oNF:_InfNfe:_IDE:_DEMI:Text))))+" "+AllTrim(cDtHrRecCab),IIF(!Empty(cCodAutSef) .And. ((Val(SubStr(oNF:_INFNFE:_IDE:_SERIE:TEXT,1,3)) >= 900).And.(oNFe:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT)$"2") .Or. (oNFe:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT)$"1|6|7",cCodAutSef+" "+AllTrim(IIF(!Empty(dDtReceb),ConvDate(DTOS(dDtReceb)),Iif(oNF:_INFNFE:_VERSAO:TEXT >= "3.10",ConvDate(oNF:_InfNfe:_IDE:_DHEMI:Text),ConvDate(oNF:_InfNfe:_IDE:_DEMI:Text))))+" "+AllTrim(cDtHrRecCab),TransForm(cChaveCont,"@r 9999 9999 9999 9999 9999 9999 9999 9999 9999"))),oFont08:oFont)
 nFolha++
 
-
 //⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
 //≥Quadro 5                                                                ≥
 //¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ
-oDanfe:Box(nLine+164,nBaseCol,nLine+189,350)
-oDanfe:Box(nLine+164,350,nLine+189,602)
-oDanfe:Box(nLine+164,602,nLine+189,MAXBOXH+70)
-oDanfe:Say(nLine+172,nBaseTxt,"INSCRI«√O ESTADUAL",oFont08N:oFont)
-oDanfe:Say(nLine+180,nBaseTxt,IIf(Type("oEmitente:_IE:TEXT")<>"U",oEmitente:_IE:TEXT,""),oFont08:oFont)
-oDanfe:Say(nLine+172,360,"INSC.ESTADUAL DO SUBST.TRIB.",oFont08N:oFont)
-oDanfe:Say(nLine+180,362,IIf(Type("oEmitente:_IEST:TEXT")<>"U",oEmitente:_IEST:TEXT,""),oFont08:oFont)
-oDanfe:Say(nLine+172,612,"CNPJ",oFont08N:oFont)
-oDanfe:Say(nLine+180,612,TransForm(oEmitente:_CNPJ:TEXT,IIf(Len(oEmitente:_CNPJ:TEXT)<>14,"@r 999.999.999-99","@r 99.999.999/9999-99")),oFont08:oFont)
+oDanfe:Box(nLine+164 - nAjustaNat,nBaseCol,nLine+189 - nAjustaNat,350)
+oDanfe:Box(nLine+164 - nAjustaNat,350,nLine+189 - nAjustaNat,602)
+oDanfe:Box(nLine+164 - nAjustaNat,602,nLine+189 - nAjustaNat,MAXBOXH+70)
+oDanfe:Say(nLine+172 - nAjustaNat,nBaseTxt,"INSCRI«√O ESTADUAL",oFont08N:oFont)
+oDanfe:Say(nLine+180 - nAjustaNat,nBaseTxt,IIf(Type("oEmitente:_IE:TEXT")<>"U",oEmitente:_IE:TEXT,""),oFont08:oFont)
+oDanfe:Say(nLine+172 - nAjustaNat,360,"INSC.ESTADUAL DO SUBST.TRIB.",oFont08N:oFont)
+oDanfe:Say(nLine+180 - nAjustaNat,362,IIf(Type("oEmitente:_IEST:TEXT")<>"U",oEmitente:_IEST:TEXT,""),oFont08:oFont)
+oDanfe:Say(nLine+172 - nAjustaNat,612,"CNPJ/CPF",oFont08N:oFont)
+
+Do Case
+	Case Type("oEmitente:_CNPJ")=="O"
+		cAux := TransForm(oEmitente:_CNPJ:TEXT,"@r 99.999.999/9999-99")
+	Case Type("oEmitente:_CPF")=="O"
+		cAux := TransForm(oEmitente:_CPF:TEXT,"@r 999.999.999-99")
+	OtherWise
+		cAux := Space(14)
+EndCase
+oDanfe:Say(nLine+180 - nAjustaNat,612,cAux,oFont08:oFont)
 
 Return()
 
-Static Function GetXML(cIdEnt,aIdNFe,cModalidade)  
-
+Static Function GetXML(cIdEnt,aIdNFe,cModalidade, lJob)  
 Local aRetorno		:= {}
 Local aDados		:= {}
 
 Local cURL			:= PadR(GetNewPar("MV_SPEDURL","http://localhost:8080/sped"),250)
 Local cModel		:= "55"
-
-
 Local nZ			:= 0
 Local nCount		:= 0
-
 Local oWS
 
+default lJob := .F.
 If Empty(cModalidade)    
 
 	oWS := WsSpedCfgNFe():New()
@@ -3285,7 +3587,7 @@ For nZ := 1 To len(aIdNfe)
 
     nCount++
 
-	aDados := executeRetorna( aIdNfe[nZ], cIdEnt )
+	aDados := executeRetorna( aIdNfe[nZ], cIdEnt, ,lJob)
 	
 	if ( nCount == 10 )
 		delClassIntF()
@@ -3355,530 +3657,524 @@ nRetorno := 0
 
 Return nRetorno
 
-/*
-‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
-±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
-±±⁄ƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒø±±
-±±≥FunáÖo    ≥ DanfeIT   ≥ Autor ≥ Roberto Souza        ≥ Data ≥ 13/08/10 ≥±±
-±±√ƒƒƒƒƒƒƒƒƒƒ≈ƒƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒ¥±±
-±±≥DescriáÖo ≥ Definicao do Box de Itens.                                 ≥±±
-±±≥			 ≥                                                            ≥±±
-±±√ƒƒƒƒƒƒƒƒƒƒ≈ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¥±±
-±±≥ Uso      ≥ FAT/FIS                                                    ≥±±
-±±¿ƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ±±
-±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
-ﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂ
-*/
+//-----------------------------------------------------------------------
+/*/{Protheus.doc} DanfeIT
+Definicao do Box de Itens.
+ 
+@author 	Roberto Souza
+@since 		13/08/10
+@version 	1.0
+/*/
+//-----------------------------------------------------------------------
 Static Function DanfeIT(oDanfe, nLine, nBaseCol, nBaseTxt, nFolha, nFolhas, aColProd, aMensagem, nPosMsg, aTamCol)
+	
+	Local nAux  	:= 0
+	Local nAux2 	:= 0
+	Local nX    	:= 0
+	Local cMVCODREG	:= Alltrim( SuperGetMV("MV_CODREG", ," ") )
+	Local lVerso	:= (MV_PAR05 == 1 .And. (nFolha % 2) == 0)
 
-Local nAux  := 0
-Local nAux2 := 0
-Local nX    := 0
-Local cMVCODREG	:= Alltrim( SuperGetMV("MV_CODREG", ," ") )
+	oBrush := TBrush():New( , CLR_BLACK )
 
-oBrush := TBrush():New( , CLR_BLACK )
-If nFolha == 1
-	nLine -= 2
-	
-	nBaseTxt -= 30
-	oDanfe:FillRect({nLine+455,nBaseCol,nLine+574,nBaseCol+30},oBrush)
-	
-	oDanfe:Say(nLine+568,nBaseTxt+7,"DADOS DO PRODUTO / SERVI«O",oFont08N:oFont, ,CLR_WHITE , 270 )
-	nBaseTxt += 30 
-	aColProd := {}
-	nAux     := nBaseCol + 30
-	AADD(aColProd, {nAux, nAux + aTamCol[1]}) //"COD. PROD"
-	nAux += aTamCol[1]
-	AADD(aColProd, {nAux, nAux + aTamCol[2]}) // "DESCRI«√O DO PRODUTOS/SERVI«OS"
-	nAux += aTamCol[2]
-	AADD(aColProd, {nAux, nAux + aTamCol[3]}) // "NCM/SH"
-	nAux += aTamCol[3]
-	AADD(aColProd, {nAux, nAux + aTamCol[4]}) // "CST"
-	nAux += aTamCol[4]
-	AADD(aColProd, {nAux, nAux + aTamCol[5]}) // "CFOP"
-	nAux += aTamCol[5]
-	AADD(aColProd, {nAux, nAux + aTamCol[6]}) // "UN"
-	nAux += aTamCol[6]
-	AADD(aColProd, {nAux, nAux + aTamCol[7]}) // "QUANT."
-	nAux += aTamCol[7]
-	AADD(aColProd, {nAux, nAux + aTamCol[8]}) // "V.UNITARIO"
-	nAux += aTamCol[8]
-	AADD(aColProd, {nAux, nAux + aTamCol[9]}) // "VLR TOTAL"
-	nAux += aTamCol[9]
-//	AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "PER DESC"
- //	nAux += aTamCol[10]
-	AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "VLR DESC"
-	nAux += aTamCol[10]
-	AADD(aColProd, {nAux, nAux + aTamCol[11]}) // "VLR LIQ"
-	nAux += aTamCol[11]
-	AADD(aColProd, {nAux, nAux + aTamCol[12]}) // "TOT LIQ"
-	nAux += aTamCol[12]
-	AADD(aColProd, {nAux, nAux + aTamCol[13]}) // "BC.ICMS"
-	nAux += aTamCol[13]
-	AADD(aColProd, {nAux, nAux + aTamCol[14]}) // "BC.ICMS ST"
-	nAux += aTamCol[14]
-	AADD(aColProd, {nAux, nAux + aTamCol[15]}) // "VLR ICMS"
-	nAux += aTamCol[15]
-	AADD(aColProd, {nAux, nAux + aTamCol[16]}) // "VLR ICMS ST"
-	nAux += aTamCol[16]
-	AADD(aColProd, {nAux, nAux + aTamCol[17]}) // "VALOR IPI"
-	nAux += aTamCol[17]
-	AADD(aColProd, {nAux, nAux + aTamCol[18]}) // "ICMS"
-	nAux += aTamCol[18]
-	AADD(aColProd, {nAux, nAux + aTamCol[19]}) // "IPI"
-	
-	oDanfe:Box(nLine+454,nBaseCol+31,nLine+574,MAXBOXH+70)
-	nAux := nBaseCol + 30
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[1])
-	oDanfe:Say(nLine+462, nAux + 2,"COD. PROD", oFont08N:oFont)
-	nAux += aTamCol[1]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[2])
-	oDanfe:Say(nLine+462, nAux + 2,"DESCR PROD", oFont08N:oFont)
-	nAux += aTamCol[2]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[3])
-	oDanfe:Say(nLine+462, nAux + 2,"NCM/SH", oFont08N:oFont)
-	nAux += aTamCol[3]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[4])
-	If cMVCODREG == "1"
-		oDanfe:Say(nLine+462, nAux + 2,"CSOSN", oFont08N:oFont)
+	If nFolha == 1   
+
+		nLine -= 2
+
+		nBaseTxt -= 30
+		If nMAXITEM <> 0
+			If ( valType(oEntrega)=="U" ) .and. ( valType(oRetirada)=="U")
+				oDanfe:FillRect({nLine+455,nBaseCol,nLine+574,nBaseCol+30},oBrush)
+				oDanfe:Say(nLine+568,nBaseTxt+7,"DADOS DO PRODUTO / SERVI«O",oFont08N:oFont, ,CLR_WHITE , 270 )
+			ElseIf ( valType(oEntrega)=="O" ) .or. ( valType(oRetirada)=="O")
+				oDanfe:FillRect({nLine+522,nBaseCol,nLine+592,nBaseCol+30},oBrush)
+				oDanfe:Say(nLine+587,nBaseTxt+7,"DADOS DO PRODUTO/",oFont08N:oFont, ,CLR_WHITE , 270 )
+				oDanfe:Say(nLine+579,nBaseTxt+14,"SERVI«O",oFont08N:oFont, ,CLR_WHITE , 270 )
+			Endif
+
+			nBaseTxt += 30 
+			aColProd := {}
+			nAux     := nBaseCol + 30
+			AADD(aColProd, {nAux, nAux + aTamCol[1]}) //"COD. PROD"
+			nAux += aTamCol[1]
+			AADD(aColProd, {nAux, nAux + aTamCol[2]}) // "DESCRI«√O DO PRODUTOS/SERVI«OS"
+			nAux += aTamCol[2]
+			AADD(aColProd, {nAux, nAux + aTamCol[3]}) // "NCM/SH"
+			nAux += aTamCol[3]
+			AADD(aColProd, {nAux, nAux + aTamCol[4]}) // "CST"
+			nAux += aTamCol[4]
+			AADD(aColProd, {nAux, nAux + aTamCol[5]}) // "CFOP"
+			nAux += aTamCol[5]
+			AADD(aColProd, {nAux, nAux + aTamCol[6]}) // "UN"
+			nAux += aTamCol[6]
+			AADD(aColProd, {nAux, nAux + aTamCol[7]}) // "QUANT."
+			nAux += aTamCol[7]
+			AADD(aColProd, {nAux, nAux + aTamCol[8]}) // "V.UNITARIO"
+			nAux += aTamCol[8]
+			AADD(aColProd, {nAux, nAux + aTamCol[9]}) // "VLR TOTAL"
+			nAux += aTamCol[9]
+			//	AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "PER DESC"
+			//	nAux += aTamCol[10]
+			AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "VLR DESC"
+			nAux += aTamCol[10]
+			AADD(aColProd, {nAux, nAux + aTamCol[11]}) // "VLR LIQ"
+			nAux += aTamCol[11]
+			AADD(aColProd, {nAux, nAux + aTamCol[12]}) // "TOT LIQ"
+			nAux += aTamCol[12]
+			AADD(aColProd, {nAux, nAux + aTamCol[13]}) // "BC.ICMS"
+			nAux += aTamCol[13]
+			AADD(aColProd, {nAux, nAux + aTamCol[14]}) // "BC.ICMS ST"
+			nAux += aTamCol[14]
+			AADD(aColProd, {nAux, nAux + aTamCol[15]}) // "VLR ICMS"
+			nAux += aTamCol[15]
+			AADD(aColProd, {nAux, nAux + aTamCol[16]}) // "VLR ICMS ST"
+			nAux += aTamCol[16]
+			AADD(aColProd, {nAux, nAux + aTamCol[17]}) // "VALOR IPI"
+			nAux += aTamCol[17]
+			AADD(aColProd, {nAux, nAux + aTamCol[18]}) // "ICMS"
+			nAux += aTamCol[18]
+			AADD(aColProd, {nAux, nAux + aTamCol[19]}) // "IPI"
+		
+
+			oDanfe:Box(nLine+454+nAjustaPro,nBaseCol+31,nLine+574,MAXBOXH+70)
+			nAux := nBaseCol + 30
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[1])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"COD. PROD", oFont08N:oFont)
+			nAux += aTamCol[1]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[2])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"DESCR PROD", oFont08N:oFont)
+			nAux += aTamCol[2]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[3])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"NCM/SH", oFont08N:oFont)
+			nAux += aTamCol[3]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[4])
+			If cMVCODREG == "1"
+				oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"CSOSN", oFont08N:oFont)
+			Else
+				oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"CST", oFont08N:oFont)
+			Endif
+			nAux += aTamCol[4]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[5])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"CFOP", oFont08N:oFont)
+			nAux += aTamCol[5]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[6])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"UN", oFont08N:oFont)
+			nAux += aTamCol[6]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[7])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"QUANT.", oFont08N:oFont)
+			nAux += aTamCol[7]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[8])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"V.UNITARIO", oFont08N:oFont)
+			nAux += aTamCol[8]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[9])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"VLR TOTAL", oFont08N:oFont)
+			nAux += aTamCol[9]
+			//	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
+			//	oDanfe:Say(nLine+462, nAux + 2,"DESC", oFont08N:oFont)
+			//	nAux += aTamCol[10]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[10])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"VLR DESC", oFont08N:oFont)
+			nAux += aTamCol[10]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[11])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"V.UNI LIQ", oFont08N:oFont)
+			nAux += aTamCol[11]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[12])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"TOTAL LIQ", oFont08N:oFont)
+			nAux += aTamCol[12]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[13])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"BC.ICMS", oFont08N:oFont)
+			nAux += aTamCol[13]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[14])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"BC.ICMS ST", oFont08N:oFont)
+			nAux += aTamCol[14]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[15])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"VLR ICMS", oFont08N:oFont)
+			nAux += aTamCol[15]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[16])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"VLR ICMS ST", oFont08N:oFont)
+			nAux += aTamCol[16]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[17])
+			oDanfe:Say(nLine+462+nAjustaPro, nAux + 2,"VALOR IPI", oFont08N:oFont)
+			nAux  += aTamCol[17]
+			nAux2 := nAux
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[18])
+			oDanfe:Say(nLine+468+nAjustaPro, nAux + 2,"ICMS", oFont08N:oFont)
+			nAux += aTamCol[18]
+			oDanfe:Box(nLine+454+nAjustaPro, nAux, nLine+469+nAjustaPro, nAux + aTamCol[19])
+			oDanfe:Say(nLine+468+nAjustaPro, nAux + 2,"IPI", oFont08N:oFont)
+			oDanfe:Box(nLine+454+nAjustaPro, nAux2, nLine+461+nAjustaPro, nAux2 + aTamCol[18] + aTamCol[19])
+			oDanfe:Say(nLine+460+nAjustaPro, nAux2 + 2,"ALIQUOTA", oFont08N:oFont)
+		
+			For Nx :=1 to Len(aColProd)
+				If ( valType(oEntrega)=="U" ) .and. ( valType(oRetirada)=="U")
+					oDanfe:Box(nLine+469,aColProd[nX][1],nLine+575,aColProd[nX][2])
+				ElseIf ( valType(oEntrega)=="O" ) .or. ( valType(oRetirada)=="O")
+					oDanfe:Box(nLine+469+nAjustaPro,aColProd[nX][1],nLine+575+13,aColProd[nX][2])		
+				Endif
+			Next
+		EndIf
 	Else
-		oDanfe:Say(nLine+462, nAux + 2,"CST", oFont08N:oFont)
-	Endif
-	nAux += aTamCol[4]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[5])
-	oDanfe:Say(nLine+462, nAux + 2,"CFOP", oFont08N:oFont)
-	nAux += aTamCol[5]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[6])
-	oDanfe:Say(nLine+462, nAux + 2,"UN", oFont08N:oFont)
-	nAux += aTamCol[6]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[7])
-	oDanfe:Say(nLine+462, nAux + 2,"QUANT.", oFont08N:oFont)
-	nAux += aTamCol[7]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[8])
-	oDanfe:Say(nLine+462, nAux + 2,"V.UNITARIO", oFont08N:oFont)
-	nAux += aTamCol[8]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[9])
-	oDanfe:Say(nLine+462, nAux + 2,"VLR TOTAL", oFont08N:oFont)
-	nAux += aTamCol[9]
-//	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
-  //	oDanfe:Say(nLine+462, nAux + 2,"DESC", oFont08N:oFont)
-//	nAux += aTamCol[10]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
-	oDanfe:Say(nLine+462, nAux + 2,"VLR DESC", oFont08N:oFont)
-	nAux += aTamCol[10]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[11])
-	oDanfe:Say(nLine+462, nAux + 2,"V.UNI LIQ", oFont08N:oFont)
-	nAux += aTamCol[11]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[12])
-	oDanfe:Say(nLine+462, nAux + 2,"TOTAL LIQ", oFont08N:oFont)
-	nAux += aTamCol[12]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[13])
-	oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS", oFont08N:oFont)
-	nAux += aTamCol[13]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[14])
-	oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS ST", oFont08N:oFont)
-	nAux += aTamCol[14]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[15])
-	oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS", oFont08N:oFont)
-	nAux += aTamCol[15]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[16])
-	oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS ST", oFont08N:oFont)
-	nAux += aTamCol[16]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[17])
-	oDanfe:Say(nLine+462, nAux + 2,"VALOR IPI", oFont08N:oFont)
-	nAux  += aTamCol[17]
-	nAux2 := nAux
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[18])
-	oDanfe:Say(nLine+468, nAux + 2,"ICMS", oFont08N:oFont)
-	nAux += aTamCol[18]
-	oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[19])
-	oDanfe:Say(nLine+468, nAux + 2,"IPI", oFont08N:oFont)
-	oDanfe:Box(nLine+454, nAux2, nLine+461, nAux2 + aTamCol[18] + aTamCol[19])
-	oDanfe:Say(nLine+460, nAux2 + 2,"ALIQUOTA", oFont08N:oFont)
-	
-	For Nx :=1 to Len(aColProd)
-		oDanfe:Box(nLine+469,aColProd[nX][1],nLine+575,aColProd[nX][2])	
-	Next
-Else
-                                  
-	If nPosMsg > 0
-		nLine -= 265
-	
-	//	nBaseTxt -= 30 
-	//	oDanfe:Box(nLine+454,nBaseCol,MAXBOXV,nBaseCol+30)
-		oDanfe:FillRect({nLine+455,nBaseCol,397,nBaseCol+30},oBrush)
-		oDanfe:Say(360,nBaseTxt+7,"DADOS DO PRODUTO / SERVI«O",oFont08N:oFont, , CLR_WHITE, 270 )
-		nBaseTxt += 30 
-		aColProd := {}
-		nAux     := nBaseCol + 30
-		AADD(aColProd, {nAux, nAux + aTamCol[1]}) //"COD. PROD"
-		nAux += aTamCol[1]
-		AADD(aColProd, {nAux, nAux + aTamCol[2]}) // "DESCRI«√O DO PRODUTOS/SERVI«OS"
-		nAux += aTamCol[2]
-		AADD(aColProd, {nAux, nAux + aTamCol[3]}) // "NCM/SH"
-		nAux += aTamCol[3]
-		AADD(aColProd, {nAux, nAux + aTamCol[4]}) // "CST"
-		nAux += aTamCol[4]
-		AADD(aColProd, {nAux, nAux + aTamCol[5]}) // "CFOP"
-		nAux += aTamCol[5]
-		AADD(aColProd, {nAux, nAux + aTamCol[6]}) // "UN"
-		nAux += aTamCol[6]
-		AADD(aColProd, {nAux, nAux + aTamCol[7]}) // "QUANT."
-		nAux += aTamCol[7]
-		AADD(aColProd, {nAux, nAux + aTamCol[8]}) // "V.UNITARIO"
-		nAux += aTamCol[8]
-		AADD(aColProd, {nAux, nAux + aTamCol[9]}) // "VLR TOTAL"
-		nAux += aTamCol[9]
-		//AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "PER DESC"
-		//nAux += aTamCol[10]
-		AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "VLR DESC"
-		nAux += aTamCol[10]
-		AADD(aColProd, {nAux, nAux + aTamCol[11]}) // "VLR LIQ"
-		nAux += aTamCol[11]
-		AADD(aColProd, {nAux, nAux + aTamCol[12]}) // "TOT LIQ"
-		nAux += aTamCol[12]
-		AADD(aColProd, {nAux, nAux + aTamCol[13]}) // "BC.ICMS"
-		nAux += aTamCol[13]
-		AADD(aColProd, {nAux, nAux + aTamCol[14]}) // "BC.ICMS ST"
-		nAux += aTamCol[14]
-		AADD(aColProd, {nAux, nAux + aTamCol[15]}) // "VLR ICMS"
-		nAux += aTamCol[15]
-		AADD(aColProd, {nAux, nAux + aTamCol[16]}) // "VLR ICMS ST"
-		nAux += aTamCol[16]
-		AADD(aColProd, {nAux, nAux + aTamCol[17]}) // "VALOR IPI"
-		nAux += aTamCol[17]
-		AADD(aColProd, {nAux, nAux + aTamCol[18]}) // "ICMS"
-		nAux += aTamCol[18]
-		AADD(aColProd, {nAux, nAux + aTamCol[19]}) // "IPI"
-	
-		oDanfe:Box(nLine+454,nBaseCol+31,398,MAXBOXH+70)
-		nAux := nBaseCol + 30
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[1])
-		oDanfe:Say(nLine+462, nAux + 2,"COD. PROD", oFont08N:oFont)
-		nAux += aTamCol[1]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[2])
-		oDanfe:Say(nLine+462, nAux + 2,"DESCR PROD", oFont08N:oFont)
-		nAux += aTamCol[2]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[3])
-		oDanfe:Say(nLine+462, nAux + 2,"NCM/SH", oFont08N:oFont)
-		nAux += aTamCol[3]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[4])
+									
+		If nPosMsg > 0 .Or. lVerso
+			nLine -= 265
 
-		If cMVCODREG == "1"
-			oDanfe:Say(nLine+462, nAux + 2,"CSOSN", oFont08N:oFont)
-		Else
-			oDanfe:Say(nLine+462, nAux + 2,"CST", oFont08N:oFont)
-		Endif
-		nAux += aTamCol[4]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[5])
-		oDanfe:Say(nLine+462, nAux + 2,"CFOP", oFont08N:oFont)
-		nAux += aTamCol[5]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[6])
-		oDanfe:Say(nLine+462, nAux + 2,"UN", oFont08N:oFont)
-		nAux += aTamCol[6]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[7])
-		oDanfe:Say(nLine+462, nAux + 2,"QUANT.", oFont08N:oFont)
-		nAux += aTamCol[7]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[8])
-		oDanfe:Say(nLine+462, nAux + 2,"V.UNITARIO", oFont08N:oFont)
-		nAux += aTamCol[8]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[9])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR TOTAL", oFont08N:oFont)
-		nAux += aTamCol[9]
-//		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
-//		oDanfe:Say(nLine+462, nAux + 2,"DESC", oFont08N:oFont)
-//		nAux += aTamCol[10]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR DESC", oFont08N:oFont)
-		nAux += aTamCol[10]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[11])
-		oDanfe:Say(nLine+462, nAux + 2,"V.UNI LIQ", oFont08N:oFont)
-		nAux += aTamCol[11]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[12])
-		oDanfe:Say(nLine+462, nAux + 2,"TOTAL LIQ", oFont08N:oFont)
-		nAux += aTamCol[12]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[13])
-		oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS", oFont08N:oFont)
-		nAux += aTamCol[13]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[14])
-		oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS ST", oFont08N:oFont)
-		nAux += aTamCol[14]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[15])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS", oFont08N:oFont)
-		nAux += aTamCol[15]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[16])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS ST", oFont08N:oFont)
-		nAux += aTamCol[16]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[17])
-		oDanfe:Say(nLine+462, nAux + 2,"VALOR IPI", oFont08N:oFont)
-		nAux  += aTamCol[17]
-		nAux2 := nAux
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[18])
-		oDanfe:Say(nLine+468, nAux + 2,"ICMS", oFont08N:oFont)
-		nAux += aTamCol[18]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[19])
-		oDanfe:Say(nLine+468, nAux + 2,"IPI", oFont08N:oFont)
-		oDanfe:Box(nLine+454, nAux2, nLine+461, nAux2 + aTamCol[18] + aTamCol[19])
-		oDanfe:Say(nLine+460, nAux2 + 2,"ALIQUOTA", oFont08N:oFont)
+			oDanfe:FillRect({nLine+455,nBaseCol,397,nBaseCol+30},oBrush)
+			oDanfe:Say(360,nBaseTxt+7,"DADOS DO PRODUTO / SERVI«O",oFont08N:oFont, , CLR_WHITE, 270 )
+			nBaseTxt += 30 
+			aColProd := {}
+			nAux     := nBaseCol + 30
+			AADD(aColProd, {nAux, nAux + aTamCol[1]}) //"COD. PROD"
+			nAux += aTamCol[1]
+			AADD(aColProd, {nAux, nAux + aTamCol[2]}) // "DESCRI«√O DO PRODUTOS/SERVI«OS"
+			nAux += aTamCol[2]
+			AADD(aColProd, {nAux, nAux + aTamCol[3]}) // "NCM/SH"
+			nAux += aTamCol[3]
+			AADD(aColProd, {nAux, nAux + aTamCol[4]}) // "CST"
+			nAux += aTamCol[4]
+			AADD(aColProd, {nAux, nAux + aTamCol[5]}) // "CFOP"
+			nAux += aTamCol[5]
+			AADD(aColProd, {nAux, nAux + aTamCol[6]}) // "UN"
+			nAux += aTamCol[6]
+			AADD(aColProd, {nAux, nAux + aTamCol[7]}) // "QUANT."
+			nAux += aTamCol[7]
+			AADD(aColProd, {nAux, nAux + aTamCol[8]}) // "V.UNITARIO"
+			nAux += aTamCol[8]
+			AADD(aColProd, {nAux, nAux + aTamCol[9]}) // "VLR TOTAL"
+			nAux += aTamCol[9]
+			AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "VLR DESC"
+			nAux += aTamCol[10]
+			AADD(aColProd, {nAux, nAux + aTamCol[11]}) // "VLR LIQ"
+			nAux += aTamCol[11]
+			AADD(aColProd, {nAux, nAux + aTamCol[12]}) // "TOT LIQ"
+			nAux += aTamCol[12]
+			AADD(aColProd, {nAux, nAux + aTamCol[13]}) // "BC.ICMS"
+			nAux += aTamCol[13]
+			AADD(aColProd, {nAux, nAux + aTamCol[14]}) // "BC.ICMS ST"
+			nAux += aTamCol[14]
+			AADD(aColProd, {nAux, nAux + aTamCol[15]}) // "VLR ICMS"
+			nAux += aTamCol[15]
+			AADD(aColProd, {nAux, nAux + aTamCol[16]}) // "VLR ICMS ST"
+			nAux += aTamCol[16]
+			AADD(aColProd, {nAux, nAux + aTamCol[17]}) // "VALOR IPI"
+			nAux += aTamCol[17]
+			AADD(aColProd, {nAux, nAux + aTamCol[18]}) // "ICMS"
+			nAux += aTamCol[18]
+			AADD(aColProd, {nAux, nAux + aTamCol[19]}) // "IPI"
 		
-		For Nx :=1 to Len(aColProd)
-			oDanfe:Box(nLine+469,aColProd[nx][1],398,aColProd[nx][2])	
-		Next
-		nLine -= 257
+			oDanfe:Box(nLine+454,nBaseCol+31,398,MAXBOXH+70)
+			nAux := nBaseCol + 30
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[1])
+			oDanfe:Say(nLine+462, nAux + 2,"COD. PROD", oFont08N:oFont)
+			nAux += aTamCol[1]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[2])
+			oDanfe:Say(nLine+462, nAux + 2,"DESCR PROD", oFont08N:oFont)
+			nAux += aTamCol[2]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[3])
+			oDanfe:Say(nLine+462, nAux + 2,"NCM/SH", oFont08N:oFont)
+			nAux += aTamCol[3]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[4])
 
-	Else 
-	
-		nLine -= 265
-	
-	//	nBaseTxt -= 30 
-	//	oDanfe:Box(nLine+454,nBaseCol,MAXBOXV,nBaseCol+30)
-		oDanfe:FillRect({nLine+455,nBaseCol,MAXBOXV-1,nBaseCol+30},oBrush)
-		oDanfe:Say(nLine+768,nBaseTxt+7,"DADOS DO PRODUTO / SERVI«O",oFont08N:oFont, , CLR_WHITE, 270 )
-		nBaseTxt += 30 
-		aColProd := {}
-		nAux     := nBaseCol + 30
-		AADD(aColProd, {nAux, nAux + aTamCol[1]}) //"COD. PROD"
-		nAux += aTamCol[1]
-		AADD(aColProd, {nAux, nAux + aTamCol[2]}) // "DESCRI«√O DO PRODUTOS/SERVI«OS"
-		nAux += aTamCol[2]
-		AADD(aColProd, {nAux, nAux + aTamCol[3]}) // "NCM/SH"
-		nAux += aTamCol[3]
-		AADD(aColProd, {nAux, nAux + aTamCol[4]}) // "CST"
-		nAux += aTamCol[4]
-		AADD(aColProd, {nAux, nAux + aTamCol[5]}) // "CFOP"
-		nAux += aTamCol[5]
-		AADD(aColProd, {nAux, nAux + aTamCol[6]}) // "UN"
-		nAux += aTamCol[6]
-		AADD(aColProd, {nAux, nAux + aTamCol[7]}) // "QUANT."
-		nAux += aTamCol[7]
-		AADD(aColProd, {nAux, nAux + aTamCol[8]}) // "V.UNITARIO"
-		nAux += aTamCol[8]
-		AADD(aColProd, {nAux, nAux + aTamCol[9]}) // "VLR TOTAL"
-		nAux += aTamCol[9]
-		//AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "PER DESC"
-		//nAux += aTamCol[10]
-		AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "VLR DESC"
-		nAux += aTamCol[10]
-		AADD(aColProd, {nAux, nAux + aTamCol[11]}) // "VLR LIQ"
-		nAux += aTamCol[11]
-		AADD(aColProd, {nAux, nAux + aTamCol[12]}) // "TOT LIQ"
-		nAux += aTamCol[12]
-		AADD(aColProd, {nAux, nAux + aTamCol[13]}) // "BC.ICMS"
-		nAux += aTamCol[13]
-		AADD(aColProd, {nAux, nAux + aTamCol[14]}) // "BC.ICMS ST"
-		nAux += aTamCol[14]
-		AADD(aColProd, {nAux, nAux + aTamCol[15]}) // "VLR ICMS"
-		nAux += aTamCol[15]
-		AADD(aColProd, {nAux, nAux + aTamCol[16]}) // "VLR ICMS ST"
-		nAux += aTamCol[16]
-		AADD(aColProd, {nAux, nAux + aTamCol[17]}) // "VALOR IPI"
-		nAux += aTamCol[17]
-		AADD(aColProd, {nAux, nAux + aTamCol[18]}) // "ICMS"
-		nAux += aTamCol[18]
-		AADD(aColProd, {nAux, nAux + aTamCol[19]}) // "IPI"
-	   
-		oDanfe:Box(nLine+454,nBaseCol+31,nLine+675,MAXBOXH+70)
-	
-		nAux := nBaseCol + 30
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[1])
-		oDanfe:Say(nLine+462, nAux + 2,"COD. PROD", oFont08N:oFont)
-		nAux += aTamCol[1]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[2])
-		oDanfe:Say(nLine+462, nAux + 2,"DESCR PROD", oFont08N:oFont)
-		nAux += aTamCol[2]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[3])
-		oDanfe:Say(nLine+462, nAux + 2,"NCM/SH", oFont08N:oFont)
-		nAux += aTamCol[3]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[4])
+			If cMVCODREG == "1"
+				oDanfe:Say(nLine+462, nAux + 2,"CSOSN", oFont08N:oFont)
+			Else
+				oDanfe:Say(nLine+462, nAux + 2,"CST", oFont08N:oFont)
+			Endif
+			nAux += aTamCol[4]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[5])
+			oDanfe:Say(nLine+462, nAux + 2,"CFOP", oFont08N:oFont)
+			nAux += aTamCol[5]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[6])
+			oDanfe:Say(nLine+462, nAux + 2,"UN", oFont08N:oFont)
+			nAux += aTamCol[6]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[7])
+			oDanfe:Say(nLine+462, nAux + 2,"QUANT.", oFont08N:oFont)
+			nAux += aTamCol[7]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[8])
+			oDanfe:Say(nLine+462, nAux + 2,"V.UNITARIO", oFont08N:oFont)
+			nAux += aTamCol[8]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[9])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR TOTAL", oFont08N:oFont)
+			nAux += aTamCol[9]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR DESC", oFont08N:oFont)
+			nAux += aTamCol[10]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[11])
+			oDanfe:Say(nLine+462, nAux + 2,"V.UNI LIQ", oFont08N:oFont)
+			nAux += aTamCol[11]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[12])
+			oDanfe:Say(nLine+462, nAux + 2,"TOTAL LIQ", oFont08N:oFont)
+			nAux += aTamCol[12]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[13])
+			oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS", oFont08N:oFont)
+			nAux += aTamCol[13]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[14])
+			oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS ST", oFont08N:oFont)
+			nAux += aTamCol[14]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[15])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS", oFont08N:oFont)
+			nAux += aTamCol[15]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[16])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS ST", oFont08N:oFont)
+			nAux += aTamCol[16]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[17])
+			oDanfe:Say(nLine+462, nAux + 2,"VALOR IPI", oFont08N:oFont)
+			nAux  += aTamCol[17]
+			nAux2 := nAux
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[18])
+			oDanfe:Say(nLine+468, nAux + 2,"ICMS", oFont08N:oFont)
+			nAux += aTamCol[18]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[19])
+			oDanfe:Say(nLine+468, nAux + 2,"IPI", oFont08N:oFont)
+			oDanfe:Box(nLine+454, nAux2, nLine+461, nAux2 + aTamCol[18] + aTamCol[19])
+			oDanfe:Say(nLine+460, nAux2 + 2,"ALIQUOTA", oFont08N:oFont)
+			
+			For Nx :=1 to Len(aColProd)
+				oDanfe:Box(nLine+469,aColProd[nx][1],398,aColProd[nx][2])	
+			Next
+			nLine -= 257
 
-		If cMVCODREG == "1"
-			oDanfe:Say(nLine+462, nAux + 2,"CSOSN", oFont08N:oFont)
 		Else
-			oDanfe:Say(nLine+462, nAux + 2,"CST", oFont08N:oFont)
-		Endif
-		nAux += aTamCol[4]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[5])
-		oDanfe:Say(nLine+462, nAux + 2,"CFOP", oFont08N:oFont)
-		nAux += aTamCol[5]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[6])
-		oDanfe:Say(nLine+462, nAux + 2,"UN", oFont08N:oFont)
-		nAux += aTamCol[6]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[7])
-		oDanfe:Say(nLine+462, nAux + 2,"QUANT.", oFont08N:oFont)
-		nAux += aTamCol[7]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[8])
-		oDanfe:Say(nLine+462, nAux + 2,"V.UNITARIO", oFont08N:oFont)
-		nAux += aTamCol[8]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[9])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR TOTAL", oFont08N:oFont)
-		nAux += aTamCol[9]
-		//oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
-		//oDanfe:Say(nLine+462, nAux + 2,"DESC", oFont08N:oFont)
-		//nAux += aTamCol[10]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR DESC", oFont08N:oFont)
-		nAux += aTamCol[10]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[11])
-		oDanfe:Say(nLine+462, nAux + 2,"V.UNI LIQ", oFont08N:oFont)
-		nAux += aTamCol[11]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[12])
-		oDanfe:Say(nLine+462, nAux + 2,"TOTAL LIQ", oFont08N:oFont)
-		nAux += aTamCol[12]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[13])
-		oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS", oFont08N:oFont)
-		nAux += aTamCol[13]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[14])
-		oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS ST", oFont08N:oFont)
-		nAux += aTamCol[14]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[15])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS", oFont08N:oFont)
-		nAux += aTamCol[15]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[16])
-		oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS ST", oFont08N:oFont)
-		nAux += aTamCol[16]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[17])
-		oDanfe:Say(nLine+462, nAux + 2,"VALOR IPI", oFont08N:oFont)
-		nAux  += aTamCol[17]
-		nAux2 := nAux
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[18])
-		oDanfe:Say(nLine+468, nAux + 2,"ICMS", oFont08N:oFont)
-		nAux += aTamCol[18]
-		oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[19])
-		oDanfe:Say(nLine+468, nAux + 2,"IPI", oFont08N:oFont)
-		oDanfe:Box(nLine+454, nAux2, nLine+461, nAux2 + aTamCol[18] + aTamCol[19])
-		oDanfe:Say(nLine+460, nAux2 + 2,"ALIQUOTA", oFont08N:oFont)
-				
-		For Nx :=1 to Len(aColProd)
-			oDanfe:Box(nLine+469,aColProd[nx][1],MAXBOXV,aColProd[nx][2])	
-		Next
-		nLine -= 257	
+			nLine -= 265
 		
-	EndIf	
+			oDanfe:FillRect({nLine+455,nBaseCol,MAXBOXV-1,nBaseCol+30},oBrush)
+			oDanfe:Say(nLine+768,nBaseTxt+7,"DADOS DO PRODUTO / SERVI«O",oFont08N:oFont, , CLR_WHITE, 270 )
+			nBaseTxt += 30 
+			aColProd := {}
+			nAux     := nBaseCol + 30
+			AADD(aColProd, {nAux, nAux + aTamCol[1]}) //"COD. PROD"
+			nAux += aTamCol[1]
+			AADD(aColProd, {nAux, nAux + aTamCol[2]}) // "DESCRI«√O DO PRODUTOS/SERVI«OS"
+			nAux += aTamCol[2]
+			AADD(aColProd, {nAux, nAux + aTamCol[3]}) // "NCM/SH"
+			nAux += aTamCol[3]
+			AADD(aColProd, {nAux, nAux + aTamCol[4]}) // "CST"
+			nAux += aTamCol[4]
+			AADD(aColProd, {nAux, nAux + aTamCol[5]}) // "CFOP"
+			nAux += aTamCol[5]
+			AADD(aColProd, {nAux, nAux + aTamCol[6]}) // "UN"
+			nAux += aTamCol[6]
+			AADD(aColProd, {nAux, nAux + aTamCol[7]}) // "QUANT."
+			nAux += aTamCol[7]
+			AADD(aColProd, {nAux, nAux + aTamCol[8]}) // "V.UNITARIO"
+			nAux += aTamCol[8]
+			AADD(aColProd, {nAux, nAux + aTamCol[9]}) // "VLR TOTAL"
+			nAux += aTamCol[9]
+			AADD(aColProd, {nAux, nAux + aTamCol[10]}) // "VLR DESC"
+			nAux += aTamCol[10]
+			AADD(aColProd, {nAux, nAux + aTamCol[11]}) // "VLR LIQ"
+			nAux += aTamCol[11]
+			AADD(aColProd, {nAux, nAux + aTamCol[12]}) // "TOT LIQ"
+			nAux += aTamCol[12]
+			AADD(aColProd, {nAux, nAux + aTamCol[13]}) // "BC.ICMS"
+			nAux += aTamCol[13]
+			AADD(aColProd, {nAux, nAux + aTamCol[14]}) // "BC.ICMS ST"
+			nAux += aTamCol[14]
+			AADD(aColProd, {nAux, nAux + aTamCol[15]}) // "VLR ICMS"
+			nAux += aTamCol[15]
+			AADD(aColProd, {nAux, nAux + aTamCol[16]}) // "VLR ICMS ST"
+			nAux += aTamCol[16]
+			AADD(aColProd, {nAux, nAux + aTamCol[17]}) // "VALOR IPI"
+			nAux += aTamCol[17]
+			AADD(aColProd, {nAux, nAux + aTamCol[18]}) // "ICMS"
+			nAux += aTamCol[18]
+			AADD(aColProd, {nAux, nAux + aTamCol[19]}) // "IPI"
+		
+			oDanfe:Box(nLine+454,nBaseCol+31,nLine+675,MAXBOXH+70)
+		
+			nAux := nBaseCol + 30
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[1])
+			oDanfe:Say(nLine+462, nAux + 2,"COD. PROD", oFont08N:oFont)
+			nAux += aTamCol[1]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[2])
+			oDanfe:Say(nLine+462, nAux + 2,"DESCR PROD", oFont08N:oFont)
+			nAux += aTamCol[2]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[3])
+			oDanfe:Say(nLine+462, nAux + 2,"NCM/SH", oFont08N:oFont)
+			nAux += aTamCol[3]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[4])
 
-EndIf
+			If cMVCODREG == "1"
+				oDanfe:Say(nLine+462, nAux + 2,"CSOSN", oFont08N:oFont)
+			Else
+				oDanfe:Say(nLine+462, nAux + 2,"CST", oFont08N:oFont)
+			Endif
+			nAux += aTamCol[4]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[5])
+			oDanfe:Say(nLine+462, nAux + 2,"CFOP", oFont08N:oFont)
+			nAux += aTamCol[5]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[6])
+			oDanfe:Say(nLine+462, nAux + 2,"UN", oFont08N:oFont)
+			nAux += aTamCol[6]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[7])
+			oDanfe:Say(nLine+462, nAux + 2,"QUANT.", oFont08N:oFont)
+			nAux += aTamCol[7]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[8])
+			oDanfe:Say(nLine+462, nAux + 2,"V.UNITARIO", oFont08N:oFont)
+			nAux += aTamCol[8]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[9])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR TOTAL", oFont08N:oFont)
+			nAux += aTamCol[9]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[10])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR DESC", oFont08N:oFont)
+			nAux += aTamCol[10]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[11])
+			oDanfe:Say(nLine+462, nAux + 2,"V.UNI LIQ", oFont08N:oFont)
+			nAux += aTamCol[11]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[12])
+			oDanfe:Say(nLine+462, nAux + 2,"TOTAL LIQ", oFont08N:oFont)
+			nAux += aTamCol[12]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[13])
+			oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS", oFont08N:oFont)
+			nAux += aTamCol[13]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[14])
+			oDanfe:Say(nLine+462, nAux + 2,"BC.ICMS ST", oFont08N:oFont)
+			nAux += aTamCol[14]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[15])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS", oFont08N:oFont)
+			nAux += aTamCol[15]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[16])
+			oDanfe:Say(nLine+462, nAux + 2,"VLR ICMS ST", oFont08N:oFont)
+			nAux += aTamCol[16]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[17])
+			oDanfe:Say(nLine+462, nAux + 2,"VALOR IPI", oFont08N:oFont)
+			nAux  += aTamCol[17]
+			nAux2 := nAux
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[18])
+			oDanfe:Say(nLine+468, nAux + 2,"ICMS", oFont08N:oFont)
+			nAux += aTamCol[18]
+			oDanfe:Box(nLine+454, nAux, nLine+469, nAux + aTamCol[19])
+			oDanfe:Say(nLine+468, nAux + 2,"IPI", oFont08N:oFont)
+			oDanfe:Box(nLine+454, nAux2, nLine+461, nAux2 + aTamCol[18] + aTamCol[19])
+			oDanfe:Say(nLine+460, nAux2 + 2,"ALIQUOTA", oFont08N:oFont)
+					
+			For Nx :=1 to Len(aColProd)
+				oDanfe:Box(nLine+469,aColProd[nx][1],MAXBOXV,aColProd[nx][2])	
+			Next
+			nLine -= 257	
+			
+		EndIf	
 
+	EndIf
 
 Return
 
-/*
-‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
-±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
-±±⁄ƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¬ƒƒƒƒƒƒ¬ƒƒƒƒƒƒƒƒƒƒø±±
-±±≥FunáÖo    ≥ DanfeInfC ≥ Autor ≥ Roberto Souza        ≥ Data ≥ 13/08/10 ≥±±
-±±√ƒƒƒƒƒƒƒƒƒƒ≈ƒƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒ¥±±
-±±≥DescriáÖo ≥ Definicao do Box de InformaÁıes complementares.            ≥±±
-±±≥			 ≥                                                            ≥±±
-±±√ƒƒƒƒƒƒƒƒƒƒ≈ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒ¥±±
-±±≥ Uso      ≥ FAT/FIS                                                    ≥±±
-±±¿ƒƒƒƒƒƒƒƒƒƒ¡ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ±±
-±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±±
-ﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂﬂ
-*/
+//-----------------------------------------------------------------------
+/*/{Protheus.doc} DanfeInfC
+Definicao do Box de InformaÁıes complementares.
+ 
+@author 	Roberto Souza
+@since 		13/08/10
+@version 	1.0
+/*/
+//-----------------------------------------------------------------------
 Static Function DanfeInfC(oDanfe,aMensagem,nBaseTxt,nBaseCol,nLine,nPosMsg, nFolha,lComplemento )
 
-local cLogoTotvs := "Powered_by_TOTVS.bmp"
-local cStartPath := GetSrvProfString("Startpath","")
-Local Nx:= 0
-Local Nw:= 0
-local nPosAdicionais := 0
-default lComplemento := .F.
-oBrush := TBrush():New( , CLR_BLACK )
+	Local cLogoTotvs 		:= "Powered_by_TOTVS.bmp"
+	Local cStartPath 		:= GetSrvProfString("Startpath","")
+	Local nPosAdicionais	:= 0
+	Local nX				:= 0	
 
-If nFolha ==1
+	Default lComplemento := .F.
 
-	nBaseTxt -= 30 
-	//oDanfe:Box(nLine+597,nBaseCol,MAXBOXV,nBaseCol+30)
-	oDanfe:FillRect({nLine+598,nBaseCol,MAXBOXV-1,nBaseCol+30},oBrush)
-	oBrush:End()
-	
-	oDanfe:Say(MAXBOXV-25,nBaseTxt+1,"DADOS",oFont08N:oFont, , CLR_WHITE, 270 )
-	oDanfe:Say(MAXBOXV-13,nBaseTxt+11,"ADICIONAIS"    ,oFont08N:oFont, ,CLR_WHITE , 270 )
-	nBaseTxt += 30 
-	
-	oDanfe:Box(nLine+597,nBaseCol+30,MAXBOXV,622)
-	oDanfe:Say(nLine+606,nBaseTxt,"INFORMA«’ES COMPLEMENTARES",oFont08N:oFont)
-	
-	
-	nLenMensagens:= Len(aMensagem)
-	nLin:= nLine+618
-	
-	For nX := 1 To Min(nLenMensagens, MAXMSG)
-		oDanfe:Say(nLin,nBaseTxt,aMensagem[nX],oFont07:oFont)
-		nLin:= nLin+10
-	Next nX
-	
-	If Nx <= nLenMensagens 
-		nPosMsg := Nx
-	EndIf 
-	
-	oDanfe:Box(nLine+597,622,MAXBOXV,MAXBOXH+70)
-	oDanfe:Say(nLine+606,632,"RESERVADO AO FISCO",oFont08N:oFont)
+	oBrush := TBrush():New( , CLR_BLACK )
 
-	//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
-	//≥Logotipo Rodape
-	//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ												
-	if file(cLogoTotvs) .or. Resource2File ( cLogoTotvs, cStartPath+cLogoTotvs )
-		oDanfe:SayBitmap(MAXBOXV+1,752,cLogoTotvs,120,20)
-	endif	
-	nLenMensagens:= Len(aResFisco)
-	nLin:= nLine+618   
-	For nX := 1 To Min(nLenMensagens, MAXMSG)
-  		oDanfe:Say(nLin,632,aResFisco[nX],oFont08:oFont)
-  		nLin:= nLin+10
-	Next
+	If nFolha == 1
 
-ElseIf nFolha == 2
+		nBaseTxt -= 30 
+		//oDanfe:Box(nLine+597,nBaseCol,MAXBOXV,nBaseCol+30)
+		oDanfe:FillRect({nLine+597+nAjustaDad,nBaseCol,MAXBOXV-1,nBaseCol+30},oBrush)
+		oBrush:End()
+		
+		oDanfe:Say(MAXBOXV-25,nBaseTxt+1,"DADOS",oFont08N:oFont, , CLR_WHITE, 270 )
+		oDanfe:Say(MAXBOXV-13,nBaseTxt+11,"ADICIONAIS"    ,oFont08N:oFont, ,CLR_WHITE , 270 )
+		nBaseTxt += 30 
+		
+		oDanfe:Box(nLine+597+nAjustaDad,nBaseCol+30,MAXBOXV,622)
+		oDanfe:Say(nLine+606+nAjustaDad,nBaseTxt,"INFORMA«’ES COMPLEMENTARES",oFont08N:oFont)
+		
+		
+		nLenMensagens:= Len(aMensagem)
+		nLin:= nLine+618+nAjustaDad
+		
+		For nX := 1 To Min(nLenMensagens, MAXMSG)
+			oDanfe:Say(nLin,nBaseTxt,aMensagem[nX],oFont07:oFont)
+			nLin:= nLin+10
+		Next nX
+		
+		If Nx <= nLenMensagens 
+			nPosMsg := Nx
+		else 
+			nPosMsg := 0 
+		EndIf 
+		
+		//oDanfe:Box(nLine+597,622,MAXBOXV,MAXBOXH+70)
+		oDanfe:Box(nLine+597+nAjustaDad,622,MAXBOXV,MAXBOXH+70)
+		oDanfe:Say(nLine+606+nAjustaDad,632,"RESERVADO AO FISCO",oFont08N:oFont)
 
-	if lComplemento
-		nLine -= 208
-		nBaseTxt +=30 
-		nPosAdicionais := MAXBOXV-239 
-	else	
-		nLine :=  0
-		nPosAdicionais := MAXBOXV-25
-	endif	
-	
-	nBaseTxt -= 30 
-	oDanfe:Box(nLine+597,nBaseCol,MAXBOXV,nBaseCol+30)
-	oDanfe:FillRect({nLine+398,nBaseCol,MAXBOXV-1,nBaseCol+30},oBrush)
-	oBrush:End()
-	
-	oDanfe:Say(nPosAdicionais,nBaseTxt+1,"DADOS",oFont08N:oFont, ,CLR_WHITE,270)
-	oDanfe:Say(nPosAdicionais+12,nBaseTxt+11,"ADICIONAIS"    ,oFont08N:oFont, ,CLR_WHITE , 270 )
-	nBaseTxt += 30 
-	
-	oDanfe:Box(nLine+397,nBaseCol+30,MAXBOXV,622)
-	if lComplemento
-		nBaseTxt += 30
-	endif
-	oDanfe:Say(nLine+406,nBaseTxt,"INFORMA«’ES COMPLEMENTARES",oFont08N:oFont)
-	
-	
-	nLenMensagens:= Len(aMensagem)
-	nLin:= nLine+416
-	
-	For nX := nPosMsg To nLenMensagens
-		oDanfe:Say(nLin,nBaseTxt,aMensagem[nX],oFont07:oFont)
-		nLin:= nLin+10
-		Nw++
-		If Nw >= MAXMSG2
-			Exit
-		EndIf	
-	Next nX
-	
-	nPosMsg := 0
-	
-	oDanfe:Box(nLine+397,622,MAXBOXV,MAXBOXH+70)
-	oDanfe:Say(nLine+406,632,"RESERVADO AO FISCO",oFont08N:oFont)
+		//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
+		//≥Logotipo Rodape
+		//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ												
+		if file(cLogoTotvs) .or. Resource2File ( cLogoTotvs, cStartPath+cLogoTotvs )
+			oDanfe:SayBitmap(MAXBOXV+1,752,cLogoTotvs,120,20)
+		endif	
+		nLenMensagens:= Len(aResFisco)
+		nLin:= nLine+618   
+		For nX := 1 To Min(nLenMensagens, MAXMSG)
+			oDanfe:Say(nLin,632,aResFisco[nX],oFont08:oFont)
+			nLin:= nLin+10
+		Next
 
-	//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
-	//≥Logotipo Rodape
-	//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ												
-	if file(cLogoTotvs) .or. Resource2File ( cLogoTotvs, cStartPath+cLogoTotvs )
-		oDanfe:SayBitmap(MAXBOXV+1,752,cLogoTotvs,120,20)
-	endif	
-EndIf	
-Return() 
+	ElseIf nFolha >= 2
+
+		if lComplemento
+			nLine -= 208
+			nBaseTxt +=30 
+			nPosAdicionais := MAXBOXV-239
+		else
+			nLine :=  0
+			nPosAdicionais := MAXBOXV-25
+		endif	
+		
+		nBaseTxt -= 30 
+		oDanfe:Box(nLine+597,nBaseCol,MAXBOXV,nBaseCol+30)
+		oDanfe:FillRect({nLine+398,nBaseCol,MAXBOXV-1,nBaseCol+30},oBrush)
+		oBrush:End()
+		
+		oDanfe:Say(nPosAdicionais,nBaseTxt+1,"DADOS",oFont08N:oFont, ,CLR_WHITE,270)
+		oDanfe:Say(nPosAdicionais+12,nBaseTxt+11,"ADICIONAIS"    ,oFont08N:oFont, ,CLR_WHITE , 270 )
+		nBaseTxt += 30 
+		
+		oDanfe:Box(nLine+397,nBaseCol+30,MAXBOXV,622)
+		if lComplemento
+			nBaseTxt += 30
+		endif
+		oDanfe:Say(nLine+406,nBaseTxt,"INFORMA«’ES COMPLEMENTARES",oFont08N:oFont)
+		
+		nLenMensagens:= Len(aMensagem)
+		nLin:= nLine+416
+
+		For nX := nPosMsg To Min(nLenMensagens,(nPosMsg-1)+MAXMSG2)
+			oDanfe:Say(nLin,nBaseTxt,aMensagem[nX],oFont07:oFont)
+			nLin:= nLin+10
+		Next nX
+			
+		If Nx <= nLenMensagens 
+			nPosMsg := Nx
+		else 
+			nPosMsg := 0 
+		EndIf 
+		
+		oDanfe:Box(nLine+397,622,MAXBOXV,MAXBOXH+70)
+		oDanfe:Say(nLine+406,632,"RESERVADO AO FISCO",oFont08N:oFont)
+
+		//⁄ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒø
+		//≥Logotipo Rodape
+		//¿ƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒƒŸ												
+		if file(cLogoTotvs) .or. Resource2File ( cLogoTotvs, cStartPath+cLogoTotvs )
+			oDanfe:SayBitmap(MAXBOXV+1,752,cLogoTotvs,120,20)
+		endif	
+	EndIf
+
+Return
 
  /*
 ‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
@@ -3973,37 +4269,30 @@ Static Function RetTamCol(aCabec, aValores, oPrinter, oFontCabec, oFont)
 	
 	Local aTamCol    := {}
 	Local nAux       := 0
-
 	Local nX         := 0
-	Local nY         := 0
-	Local oFontSize  := FWFontSize():new()
-	
-	For nX := 1 To Len(aCabec)
-		
-		AADD(aTamCol, {})
-		//aTamCol[nX] := Round(oPrinter:GetTextWidth(aCabec[nX], oFontCabec) * nConsNeg + 2, 0)
-		aTamCol[nX] := oFontSize:getTextWidth( alltrim(aCabec[nX]), oFontCabec:Name, oFontCabec:nWidth, oFontCabec:Bold, oFontCabec:Italic )
-	Next nX
-	
-	For nX := 1 To Len(aValores[1])
-		
-		nAux := 0
-		
-		For nY := 1 To Len(aValores[1][nX])
-			
-			If (oPrinter:GetTextWidth(aValores[1][nX][nY], oFont) * nConsTex + 2) > nAux
-				//nAux := Round(oPrinter:GetTextWidth(aValores[1][nX][nY], oFont) * nConsTex + 2, 0)
-				nAux := oFontSize:getTextWidth( Alltrim(aValores[1][nX][nY]), oFontCabec:Name, oFontCabec:nWidth, oFontCabec:Bold, oFontCabec:Italic )+ 7
-			EndIf
-			
-		Next nY
-		
-		If aTamCol[nX] < nAux
-			aTamCol[nX] := nAux
-		EndIf
-		
-	Next nX
-	
+
+	/* Valores fixados, devido erro de impr. quando S.O est· com visualizaÁ„o <> de 100% 
+	*/		
+		aTamCol := {45,;
+					69,;
+					39,;
+					iif(aCabec[4] == "CSOSN", 22, 19),; // CST/CSON
+					23,;
+					19,;
+					33,;
+					49,;
+					46,;
+					40,;
+					41,;
+					45,;
+					39,;
+					iif(aCabec[4] == "CSOSN", 45, 46),; // BC.ICMS ST 
+					40,;
+					iif(aCabec[4] == "CSOSN", 49, 51),; // VLR ICMS ST
+					42,;
+					34,;
+					30}
+
 	// Workaround para o mÈtodo FWMSPrinter:GetTextWidth() na coluna UN
 	aTamCol[6] += 5
 	
@@ -4102,6 +4391,43 @@ Static Function PosQuebrVal(cTexto)
 	EndIf
 	
 Return nPos
+
+//-----------------------------------------------------------------------
+/*/{Protheus.doc} MontaEnd
+Retorna o endereÁo completo do cliente (Logradouro + N˙mero + Complemento)
+
+@author Renan Franco
+@since 11/07/2019
+@version 1.0
+
+@param  oMontaEnd	 Objeto que possui _xLgr, _xcpl e _xNRO.
+
+@return cEndereco   EndereÁo concatenado. Ex.: AV BRAZ LEME, 1000, S NECA MALL
+/*/
+//-----------------------------------------------------------------------
+Static Function MontaEnd(oMontaEnd)
+
+	Local lConverte		:= GetNewPar("MV_CONVERT",.F.)
+	Local cEndereco		:= ""
+
+	Default oMontaEnd	:= Nil
+
+	Private oEnd		:= oMontaEnd
+	
+	if  oEnd <> Nil .and. ValType(oEnd)=="O"
+
+		cEndereco := NoChar(oEnd:_Xlgr:Text,lConverte) 
+	
+		If  " SN" $ (UPPER (oEnd:_Xlgr:Text)) .Or. ",SN" $ (UPPER (oEnd:_Xlgr:Text)) .Or. "S/N" $ (UPPER (oEnd:_Xlgr:Text))
+            cEndereco += IIf(type("oEnd:_xcpl") == "O", ", " + NoChar(oEnd:_xcpl:Text,lConverte), " ")
+		Else
+            cEndereco += ", " + NoChar(oEnd:_NRO:Text,lConverte) + IIf(type("oEnd:_xcpl") == "O", ", " + NoChar(oEnd:_xcpl:Text,lConverte), " ")
+		Endif
+
+	Endif	
+
+Return cEndereco
+
 //-----------------------------------------------------------------------
 /*/{Protheus.doc} executeRetorna
 Executa o retorna de notas
@@ -4115,14 +4441,12 @@ Executa o retorna de notas
 @return aRetorno   Array com os dados da nota
 /*/
 //-----------------------------------------------------------------------
-static function executeRetorna( aNfe, cIdEnt, lUsacolab )
+static function executeRetorna( aNfe, cIdEnt, lUsacolab, lJob)
 
-Local aExecute		:= {}  
-Local aFalta		:= {}
-Local aResposta		:= {}
 Local aRetorno		:= {}
 Local aDados		:= {} 
 Local aIdNfe		:= {}
+Local aWsErro		:= {}
 
 Local cAviso		:= "" 
 Local cDHRecbto		:= ""
@@ -4135,22 +4459,16 @@ Local cProtocolo	:= ""
 Local cRetDPEC		:= ""
 Local cRetorno		:= ""
 Local cCodRetNFE	:= ""
-Local cMsgNFE		:=	""
+Local cMsgNFE		:= ""
+Local cMsgRet		:= ""
 Local cURL			:= PadR(GetNewPar("MV_SPEDURL","http://localhost:8080/sped"),250)
-Local cModel		:= "55"
-
+Local cCodStat		:= ""
 Local dDtRecib		:= CToD("")
-
-Local lFlag			:= .T.
-
 Local nDtHrRec1		:= 0
-Local nL			:= 0
 Local nX			:= 0
 Local nY			:= 0
 Local nZ			:= 1
-Local nCount		:= 0
-Local nLenNFe
-Local nLenWS
+Local nPos			:= 0
 
 Local oWS
 
@@ -4159,6 +4477,7 @@ Private oNFeRet
 Private oDoc
 
 default lUsacolab	:= .F.
+default lJob		:= .F.
 aAdd(aIdNfe,aNfe)
 
 if !lUsacolab
@@ -4171,19 +4490,21 @@ if !lUsacolab
 	oWS:oWSNFEID          := NFESBRA_NFES2():New()
 	oWS:oWSNFEID:oWSNotas := NFESBRA_ARRAYOFNFESID2():New()  
 	
-	aadd(aRetorno,{"","",aIdNfe[nZ][4]+aIdNfe[nZ][5],"","","",CToD(""),"","",""})
+	aadd(aRetorno,{"","",aIdNfe[nZ][4]+aIdNfe[nZ][5],"","","",CToD(""),"","","",""})
 	
 	aadd(oWS:oWSNFEID:oWSNotas:oWSNFESID2,NFESBRA_NFESID2():New())
 	Atail(oWS:oWSNFEID:oWSNotas:oWSNFESID2):cID := aIdNfe[nZ][4]+aIdNfe[nZ][5]
 	
 	If oWS:RETORNANOTASNX()
+
 		If Len(oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5) > 0
 			For nX := 1 To Len(oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5)
 				cRetorno        := oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5[nX]:oWSNFE:CXML
 				cProtocolo      := oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5[nX]:oWSNFE:CPROTOCOLO								
 				cDHRecbto  		:= oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5[nX]:oWSNFE:CXMLPROT
 				oNFeRet			:= XmlParser(cRetorno,"_",@cAviso,@cErro)
-				cModTrans		  := IIf(Type("oNFeRet:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT") <> "U",IIf (!Empty("oNFeRet:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT"),oNFeRet:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT,1),1)
+				cModTrans		:= IIf(ValAtrib("oNFeRet:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT") <> "U",IIf (!Empty("oNFeRet:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT"),oNFeRet:_NFE:_INFNFE:_IDE:_TPEMIS:TEXT,1),1)
+				cCodStat		:= ""
 				If ValType(oWs:OWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5[nX]:OWSDPEC)=="O"
 					cRetDPEC        := oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5[nX]:oWSDPEC:CXML
 					cProtDPEC       := oWs:oWSRETORNANOTASNXRESULT:OWSNOTAS:OWSNFES5[nX]:oWSDPEC:CPROTOCOLO
@@ -4193,9 +4514,10 @@ if !lUsacolab
 				//Tratamento para gravar a hora da transmissao da NFe
 				If !Empty(cProtocolo)
 					oDHRecbto		:= XmlParser(cDHRecbto,"","","")
-					cDtHrRec		:= IIf(Type("oDHRecbto:_ProtNFE:_INFPROT:_DHRECBTO:TEXT")<>"U",oDHRecbto:_ProtNFE:_INFPROT:_DHRECBTO:TEXT,"")
+					cDtHrRec		:= IIf(ValAtrib("oDHRecbto:_ProtNFE:_INFPROT:_DHRECBTO:TEXT")<>"U",oDHRecbto:_ProtNFE:_INFPROT:_DHRECBTO:TEXT,"")
 					nDtHrRec1		:= RAT("T",cDtHrRec)
-					
+					cMsgRet 		:= IIf(ValAtrib("oDHRecbto:_ProtNFE:_INFPROT:_XMSG:TEXT")<>"U",oDHRecbto:_ProtNFE:_INFPROT:_XMSG:TEXT,"")
+					cCodStat		:= IIf(ValAtrib("oDHRecbto:_ProtNFE:_INFPROT:_CSTAT:TEXT")<>"U",oDHRecbto:_ProtNFE:_INFPROT:_CSTAT:TEXT,"")
 					If nDtHrRec1 <> 0
 						cDtHrRec1   :=	SubStr(cDtHrRec,nDtHrRec1+1)
 						dDtRecib	:=	SToD(StrTran(SubStr(cDtHrRec,1,AT("T",cDtHrRec)-1),"-",""))
@@ -4210,9 +4532,24 @@ if !lUsacolab
 				oWS:cIdInicial    := aIdNfe[nZ][4]+aIdNfe[nZ][5]
 				oWS:cIdFinal      := aIdNfe[nZ][4]+aIdNfe[nZ][5]
 				If oWS:MONITORFAIXA()
-					cCodRetNFE := oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE[len(oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE)]:CCODRETNFE
-					cMsgNFE	:= oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE[len(oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE)]:CMSGRETNFE
-				EndIf
+					nPos    := 0
+					aWsErro := {}
+					If !Empty(cProtocolo) .AND. !Empty(cCodStat)
+						aWsErro := oWS:OWSMONITORFAIXARESULT:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE
+						For nPos := 1 To Len(aWsErro)
+							If Alltrim(aWsErro[nPos]:CCODRETNFE) == Alltrim(cCodStat)
+								Exit
+							Endif
+						Next
+					Endif
+					If nPos > 0 .And. nPos <= Len(aWsErro)
+						cCodRetNFE := oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE[nPos]:CCODRETNFE
+						cMsgNFE	:= oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE[nPos]:CMSGRETNFE
+					Else
+						cCodRetNFE := oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE[len(oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE)]:CCODRETNFE
+						cMsgNFE	:= oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE[len(oWS:oWsMonitorFaixaResult:OWSMONITORNFE[1]:OWSERRO:OWSLOTENFE)]:CMSGRETNFE
+					EndIf
+				endif
 	
 				If nY > 0
 					aRetorno[nY][1] := cProtocolo
@@ -4224,36 +4561,14 @@ if !lUsacolab
 					aRetorno[nY][8] := cModTrans
 					aRetorno[nY][9] := cCodRetNFE
 					aRetorno[nY][10]:= cMsgNFE
+					aRetorno[nY][11]:= cMsgRet
 					
-					//aadd(aResposta,aIdNfe[nY])
 				EndIf
 				cRetDPEC := ""
 				cProtDPEC:= ""
 			Next nX
-			/*For nX := 1 To Len(aIdNfe)
-				If aScan(aResposta,{|x| x[4] == aIdNfe[nX,04] .And. x[5] == aIdNfe[nX,05] })==0
-				
-					conout("Falta")
-					conout(aIdNfe[nX][4]+" - "+aIdNfe[nX][5])
-					aadd(aFalta,aIdNfe[nX])
-				EndIf
-			Next nX
-			If Len(aFalta)>0
-				aExecute := GetXML(cIdEnt,aFalta,@cModalidade)
-			Else
-				aExecute := {}
-			EndIf*/
-			/*For nX := 1 To Len(aExecute)
-				nY := aScan(aRetorno,{|x| x[3] == aExecute[nX][03]})
-				If nY == 0
-					aadd(aRetorno,{aExecute[nX][01],aExecute[nX][02],aExecute[nX][03]})
-				Else
-					aRetorno[nY][01] := aExecute[nX][01]
-					aRetorno[nY][02] := aExecute[nX][02]
-				EndIf
-			Next nX*/
 		EndIf
-	Else
+	Elseif !lJob
 		Aviso("DANFE",IIf(Empty(GetWscError(3)),GetWscError(1),GetWscError(3)),{"OK"},3)
 	EndIf 
 else
@@ -4262,7 +4577,7 @@ else
 	oDoc:cTipoMov	:= "1"									
 	oDoc:cIDERP	:= aIdNfe[nZ][4]+aIdNfe[nZ][5]+FwGrpCompany()+FwCodFil()
 	
-	aadd(aRetorno,{"","",aIdNfe[nZ][4]+aIdNfe[nZ][5],"","","",CToD(""),"","",""})
+	aadd(aRetorno,{"","",aIdNfe[nZ][4]+aIdNfe[nZ][5],"","","",CToD(""),"","","",""})
 	
 	if odoc:consultar()
 		aDados := ColDadosNf(1)
@@ -4278,10 +4593,11 @@ else
 			aDadosXml[9] := SubStr(cRetorno,At('<obsCont xCampo="nRegDPEC"><xTexto>',cRetorno)+35,15)
 		endif	
 		
-		cProtocolo		:= aDadosXml[3]		
-		cModTrans		:= IIF(Empty(aDadosXml[5]),aDadosXml[7],aDadosXml[5])
+		cProtocolo	:= aDadosXml[3]		
+		cModTrans	:= IIF(Empty(aDadosXml[5]),aDadosXml[7],aDadosXml[5])
 		cCodRetNFE	:= aDadosXml[1]
-		cMsgNFE 	:= aDadosXml[2]			
+		cMsgNFE 	:= aDadosXml[2]
+		cMsgRet		:= aDadosXml[11]			
 		
 		//Dados do DEPEC
 		If !Empty( aDadosXml[9] )
@@ -4312,6 +4628,7 @@ else
 		aRetorno[1][8] := cModTrans
 		aRetorno[1][9] := cCodRetNFE
 		aRetorno[1][10]:= cMsgNFE
+		aRetorno[1][11]:= cMsgRet
 								
 		cRetDPEC := ""
 		cProtDPEC:= ""		
@@ -4324,6 +4641,7 @@ oDHRecbto := Nil
 oNFeRet   := Nil
 
 return aRetorno[len(aRetorno)]
+
 static function getXMLColab(aIdNFe,cModalidade,lUsaColab)
 
 local nZ			:= 0
@@ -4333,8 +4651,6 @@ local cIdEnt 		:= "000000"
 
 local aDados		:= {}
 local aRetorno	:= {}
-
-
 
 If Empty(cModalidade)
 	cModalidade := ColGetPar( "MV_MODALID", "1" )	
@@ -4415,6 +4731,7 @@ local aDados	:= {}
 			aadd(aDados,"NFE|INFNFE|IDE|TPAMB") //8 - Ambiente de transmiss„o -  Caso nao tenha retorno			
 			aadd(aDados,"NFEPROC|RETDEPEC|INFDPECREG|NREGDPEC") //9 - Numero de autorizaÁ„o DPEC
 			aadd(aDados,"NFEPROC|PROTNFE|INFPROT|CHNFE") //10 - Chave da autorizacao
+			aadd(aDados,"NFEPROC|PROTNFE|INFPROT|XMSG") //11 - Tag <xMsg>
 		
 		case nInf == 2	
 			//Informacoes do cancelamento - evento
@@ -4428,6 +4745,7 @@ local aDados	:= {}
 			aadd(aDados,"ENVEVENTO|EVENTO|INFEVENTO|TPAMB") //8 - Ambiente de transmiss„o -  Caso nao tenha retorno												
 			aadd(aDados,"") //9 - Numero de autorizaÁ„o DPEC
 			aadd(aDados,"") //10 - Chave da autorizacao
+			aadd(aDados,"") //11 - Tag <xMsg>
 		
 		case nInf == 3	
 			//InformaÁıes da InutilizaÁ„o
@@ -4441,6 +4759,7 @@ local aDados	:= {}
 			aadd(aDados,"INUTNFE|INFINUT|TPAMB	") //8 - Ambiente de transmiss„o -  Caso nao tenha retorno												
 			aadd(aDados,"") //9 - Numero de autorizaÁ„o DPEC
 			aadd(aDados,"") //10 - Chave da autorizacao
+			aadd(aDados,"") //11 - Tag <xMsg>
 	end
 	
 return(aDados)
@@ -4475,3 +4794,53 @@ User Function DANFE_VI
 Local nRet := 20140825 // 25 de Abril de 2014 # Eduardo Silva ## Cliente n„o tem o DANFEII compilado no RPO ajuste para n„o dar erro
 
 Return nRet
+
+
+/*/{Protheus.doc} ValAtrib
+FunÁ„o utilizada para substituir o type onde n„o seja possivÈl a sua retirada para n„o haver  
+ocorrencia indevida pelo SonarQube.
+
+@author 	valter Silva
+@since 		09/01/2018
+@version 	12
+@return 	Nil
+/*/
+//-----------------------------------------------------------------------
+static Function ValAtrib(atributo)
+Return (type(atributo) )
+
+//-----------------------------------------------------------------------
+/*/{Protheus.doc} MontaNfcDest
+Faz criaÁ„o tag <dest> quando n„o vem no XML da NFCe
+@author 	anderson.machado
+@since 		29/04/2020
+@version 	12
+@return 	Nil
+/*/
+//-----------------------------------------------------------------------
+Static Function MontaNfcDest(oDestino)
+Local oDestRet	:= NIL
+Local cAux		:= ""
+
+cAux	:= '<?xml version="1.0" encoding="UTF-8"?>'
+cAux	+= '<dest>'
+if type("oDestino:_xNome") == "U"
+	cAux	+= 		'<xNome>CONSUMIDOR NAO IDENTIFICADO</xNome>'
+endif
+cAux	+=		'<enderDest>'
+cAux	+=   		'<xLgr> </xLgr>'
+cAux  += 			'<nro> </nro>'
+cAux	+= 			'<xBairro> </xBairro>'
+cAux	+=			'<cMun> </cMun>'
+cAux	+= 			'<Cep> </Cep>'
+cAux	+=			'<xMun> </xMun>'
+cAux	+=			'<UF> </UF>'
+cAux	+=			'<cPais>105</cPais>'
+cAux	+=			'<xPais>BRASIL</xPais>'	
+cAux 	+= 		'</enderDest>'
+cAux	+= '</dest>'
+
+oDestRet := XmlParser(cAux,"_","","")
+oDestRet := oDestRet:_dest
+
+Return oDestRet

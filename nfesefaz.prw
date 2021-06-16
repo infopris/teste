@@ -324,6 +324,7 @@ Local lIPIOutB 	    := GetNewPar("MV_IPIOUTB",.F.) .And. lIpiBenef //Quando habi
 
 Local lIcmSTDev 	:= GetNewPar("MV_ICSTDEV",.T.)  //Indica se sera gravado no XML o valor e base de ICMS ST para nf de devolucao.(Padrao T - leva)
 Local lIcmDevol		:= GetNewPar("MV_ICMDEVO",.T.)	//Define se sera gravado no XML o valor e base de ICMS para nf de devolucao. (Padrao T - leva)
+Local lDevSimpl		:= GetNewPar("MV_DEVSIMP",.F.)	//Define se sera gravado no XML o valor e base de ICMS para nf de devolucao do Simples nacional. (Padrao F - não leva)
 Local lIcmsPR		:= .F.								//Tratamento implementado para atender a ICMS/PR 2017 (Decreto 7.871/2017)
 local lIcmSTDevOri	:= lIcmSTDev					// Arnazena o valor original pois é alterado para legislação ICMS/PR 2017
 local lIcmDevolOri	:= lIcmDevol	  				// Arnazena o valor original pois é alterado para legislação ICMS/PR 2017
@@ -1751,14 +1752,19 @@ If cTipo == "1"
 						endIf
 					Endif
 					
-					If (cAliasSD2)->D2_TIPO == "D" .And. SM0->M0_ESTENT == "PR" .And. (cAliasSD2)->D2_ICMSRET > 0
-						/* Tratamento para com base na legislação do Estado do Paraná Decreto n 6.080/2012 - DOE PR Suplemento  
-						e para atender a ICMS/PR 2017 (Decreto 7.871/2017) Art. 9, Seção I, Anexo IX 
-						que não prevê o destaque do ICMS no campo específico (tanto o da operação própria do substituto quanto do 
-						retido por substituição tributária) ISSUE DSERTSS1-5542. */						
-						lIcmSTDev	:= .F.
-						lIcmDevol	:= .F.						
-						lIcmsPR	:= .T.
+					If (cAliasSD2)->D2_TIPO == "D" 
+						If SM0->M0_ESTENT == "PR" .And. (cAliasSD2)->D2_ICMSRET > 0
+							/* Tratamento para com base na legislação do Estado do Paraná Decreto n 6.080/2012 - DOE PR Suplemento  
+							para atender a ICMS/PR 2017 (Decreto 7.871/2017) Art. 9, Seção I, Anexo IX 
+							que não prevê o destaque do ICMS no campo específico (tanto o da operação própria do substituto quanto do 
+							retido por substituição tributária) ISSUE DSERTSS1-5542. */						
+							lIcmSTDev	:= .F.
+							lIcmDevol	:= .F.						
+							lIcmsPR	:= .T.
+						ElseIf lDevSimpl .And. SA2->A2_SIMPNAC == "1"
+                        	lIcmDevol := .F.
+						endif
+					
 					else
 						lIcmSTDev	:= lIcmSTDevOri
 						lIcmDevol	:= lIcmDevolOri	
@@ -2875,7 +2881,7 @@ If cTipo == "1"
 							EndIf
 						EndIf	
 
-						nValOutr += (cAliasSD2)->D2_DESPESA + (cAliasSD2)->D2_VALPS3 + (cAliasSD2)->D2_VALCF3 + nIcmsST + nCrdPres	
+						nValOutr += (cAliasSD2)->D2_DESPESA + (cAliasSD2)->D2_VALPS3 + (cAliasSD2)->D2_VALCF3 + nIcmsST + nCrdPres
 						
 						cTpOrig  := IIF(nCountIT > 0 .And. Len(aNfVinc[nCountIT]) > 9, aNfVinc[nCountIT][10], "") //Pegar tipo da nota de origem
 			           		            		
@@ -4615,8 +4621,10 @@ Else
 				// Destacar ICMS próprio no XML quando MV_ICMDEVO = .F. e nota não seja tipo Devolução - DSERTSS1-16233
 				If !lIcmDevol .And. (cAliasSD1)->D1_TIPO <> "D"
 					lIcmDevol := .T.
+				ElseIf (cAliasSD1)->D1_TIPO == "D" .and. lDevSimpl .And. SA1->A1_SIMPNAC == "1"
+                	lIcmDevol	:= .F.
 				EndIf
-
+     
 				//Tratamento para nota sobre Cupom 
 				DbSelectArea("SFT")
 			    DbSetOrder(1)

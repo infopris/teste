@@ -3,6 +3,7 @@
 	Ponto de entrada para customização do NFe Sefaz	
 */
 User Function PE01NFESEFAZ()
+
 	Local aArea		:= GetArea()
 	Local aNfe 		:= PARAMIXB
 	Local aProds 	:= {}
@@ -75,6 +76,10 @@ Static Function ChangeProducts(aProds)
 			
 			aProds[nI][4] := cDescProd 
 		EndIf
+		if SC6->C6_TES='687'
+			//aProds[nI][9] := 0
+			//aProds[nI][10] := 0
+		endif
 		nI++
 	EndDo
 	    
